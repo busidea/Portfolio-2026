@@ -8,8 +8,8 @@ st.set_page_config(page_title="Portfolio", layout="wide")
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; }
-    /* Schováme indexy tabulky (pořadová čísla řádků) */
-    [data-testid="stElementToolbar"] { display: none; }
+    /* Úprava vzhledu tabulky pro lepší čitelnost */
+    [data-testid="stDataFrame"] { border: 1px solid #dee2e6; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -58,42 +58,40 @@ def fetch_data(tickers):
     for t in tickers:
         try:
             tk = yf.Ticker(t)
-            h = tk.history(period="5d") # Stačí krátká historie pro denní změnu
+            h = tk.history(period="5d")
             if not h.empty:
                 curr[t] = h["Close"].iloc[-1]
                 diffs[t] = h["Close"].iloc[-1] - h["Close"].iloc[-2] if len(h) > 1 else 0
-            else: curr[t], diffs[t] = 0, 0
-        except: curr[t], diffs[t] = 0, 0
+            else: curr[t], diffs[t] = 0.0, 0.0
+        except: curr[t], diffs[t] = 0.0, 0.0
     return curr, diffs
 
-with st.spinner('Načítám data...'):
+with st.spinner('Aktualizuji...'):
     prices, diffs = fetch_data(df["Ticker"].tolist())
     df["TC"] = df["Ticker"].map(prices)
     df["_diff"] = df["Ticker"].map(diffs)
 
-# Výpočty pro zbytek sloupců
 fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
 df["Hodnota CZK"] = df.apply(lambda x: x["KS"] * x["TC"] * fx.get(x["Měna"], 1.0), axis=1)
 df["Inv_CZK"] = df.apply(lambda x: x["KS"] * x[col_price] * fx.get(x["Měna"], 1.0), axis=1)
 df["Zisk %"] = ((df["TC"] - df[col_price]) / df[col_price] * 100)
 df["Div. celkem CZK"] = df.apply(lambda x: x["KS"] * x["Dividenda"] * fx.get(x["Měna"], 1.0), axis=1)
 
-# Seřazení sloupců dle požadavku
 final_df = df[["Název titulu", "Ticker", "KS", "TC", "Hodnota CZK", "Zisk %", "Dividenda", "Div. celkem CZK", "_diff"]].copy()
 
-# --- FORMÁTOVÁNÍ (STYLER) ---
+# --- FORMÁTOVÁNÍ (OPRAVENO: map místo applymap) ---
 def color_profit(val):
     color = '#28a745' if val > 0 else '#dc3545' if val < 0 else 'black'
     return f'color: {color}; font-weight: bold'
 
-def bold_col(val):
-    return 'font-weight: bold'
+def color_tc(row):
+    color = '#28a745' if row['_diff'] >= 0 else '#dc3545'
+    return ['' if col != 'TC' else f'color: {color}; font-weight: bold' for col in row.index]
 
-# Aplikace stylů
 styler = final_df.style\
-    .applymap(color_profit, subset=['Zisk %'])\
-    .applymap(lambda v: f'color: {"#28a745" if v >= 0 else "#dc3545"}; font-weight: bold', subset=['TC'])\
-    .applymap(bold_col, subset=['KS', 'Hodnota CZK', 'Název titulu'])\
+    .map(color_profit, subset=['Zisk %'])\
+    .apply(color_tc, axis=1)\
+    .map(lambda v: 'font-weight: bold', subset=['KS', 'Hodnota CZK', 'Název titulu'])\
     .format({
         'KS': '{:,.0f}',
         'TC': '{:,.2f}',
@@ -102,18 +100,16 @@ styler = final_df.style\
         'Dividenda': '{:,.2f}',
         'Div. celkem CZK': '{:,.0f}'
     }, decimal=',', thousands=' ')\
-    .hide(subset=['_diff'], axis=1) # Skryjeme pomocný sloupec
+    .hide(subset=['_diff'], axis=1)
 
-# Sidebar sumář
+# Sidebar metriky
 st.sidebar.divider()
 st.sidebar.metric("Celková hodnota", f"{final_df['Hodnota CZK'].sum():,.0f} CZK".replace(",", " "))
 st.sidebar.metric("Roční dividendy", f"{final_df['Div. celkem CZK'].sum():,.0f} CZK".replace(",", " "))
 
-# --- VÝSTUP ---
-# Zobrazení pomocí st.dataframe umožní řazení kliknutím na hlavičku
 st.dataframe(
     styler, 
     use_container_width=True, 
-    height=850, # Nastavte výšku tak, aby se tabulka vešla na obrazovku
+    height=850, 
     hide_index=True
 )
