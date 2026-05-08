@@ -1,14 +1,22 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.express as px
 
-st.set_page_config(page_title="Portfolio 2026", layout="wide")
-# --- DATA --- (Aktualizovaný ticker pro Heijmans)
+st.set_page_config(page_title="Portfolio", layout="wide")
+
+# CSS pro stylování tabulky a odstranění indexů
+st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] { font-size: 1.8rem; }
+    .stDataFrame td { font-weight: 500; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- DATA ---
 def get_data():
     data = [
         ["Heidelberg Materials", "HEI.DE", 800, "Stavební materiály", "EUR", 37.45, 28.4],
-        ["HEIJMANS", "HEIJM.AS", 1162, "Stavebnictví", "EUR", 7.63, 3.77], # Změněno na HEIJM.AS
+        ["HEIJMANS", "HEIJM.AS", 1162, "Stavebnictví", "EUR", 7.63, 3.77],
         ["ČEZ", "CEZ.PR", 750, "Energetika", "CZK", 100, 100],
         ["ALPHABET", "GOOGL", 100, "Technologie", "USD", 133.34, 123.25],
         ["VIG", "VIG.PR", 500, "Pojišťovnictví", "CZK", 25.59, 24.328],
@@ -35,70 +43,79 @@ def get_data():
     ]
     return pd.DataFrame(data, columns=["Název", "Ticker", "Ks", "Sektor", "Měna", "Cena_Std", "Cena_Opce"])
 
-# --- FUNKCE PRO CENY --- (Robustnější verze)
-def fetch_prices(tickers):
-    prices = {}
+# --- FUNKCE PRO HISTORICKÁ DATA ---
+@st.cache_data(ttl=3600)
+def fetch_portfolio_data(tickers):
+    hist_prices = {}
+    current_prices = {}
     for t in tickers:
         try:
-            ticker_obj = yf.Ticker(t)
-            # Zkusíme nejdřív fast_info (rychlé a stabilní)
-            price = ticker_obj.fast_info['last_price']
-            
-            # Pokud fast_info selže nebo vrátí nesmysl, zkusíme historii
-            if price is None or price == 0 or pd.isna(price):
-                d = ticker_obj.history(period="1d")
-                if not d.empty:
-                    price = d["Close"].iloc[-1]
-                else:
-                    price = 0.0
-            prices[t] = price
-        except Exception as e:
-            prices[t] = 0.0
-    return prices
-# --- HLAVNÍ LOGIKA ---
-st.title("📈 Moje Portfolio 2026")
+            tk = yf.Ticker(t)
+            h = tk.history(period="1y")
+            if not h.empty:
+                hist_prices[t] = h
+                current_prices[t] = h["Close"].iloc[-1]
+            else:
+                current_prices[t] = 0.0
+        except:
+            current_prices[t] = 0.0
+    return current_prices, hist_prices
 
+# --- LOGIKA ---
 df = get_data()
-view_mode = st.sidebar.radio("Metrika nákupní ceny:", ["Standardní", "Včetně opcí"])
+
+# SIDEBAR
+st.sidebar.title("PORTFOLIO")
+view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
+time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"])
 col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
 
-with st.spinner('Aktualizuji data...'):
-    current_prices = fetch_prices(df["Ticker"].tolist())
-    df["Aktuální_Cena"] = df["Ticker"].map(current_prices).astype(float)
+with st.spinner('Načítám...'):
+    curr_prices, hist_data = fetch_portfolio_data(df["Ticker"].tolist())
+    df["Aktuální_Cena"] = df["Ticker"].map(curr_prices)
 
-# Fixní kurzy (dočasně pro stabilitu, než vyřešíme chybu s FX)
+# Výpočet historické změny
+def calc_change(row):
+    t = row["Ticker"]
+    if t not in hist_data or hist_data[t].empty: return 0.0
+    h = hist_data[t]["Close"]
+    
+    if time_frame == "1 den": ref_price = h.iloc[-2] if len(h)>1 else h.iloc[-1]
+    elif time_frame == "1 týden": ref_price = h.iloc[-5] if len(h)>5 else h.iloc[0]
+    elif time_frame == "1 měsíc": ref_price = h.iloc[-21] if len(h)>21 else h.iloc[0]
+    elif time_frame == "1 rok": ref_price = h.iloc[0]
+    else: ref_price = row[col_price] # Od počátku
+    
+    return ((row["Aktuální_Cena"] - ref_price) / ref_price) * 100 if ref_price != 0 else 0
+
+df["Zisk_%"] = df.apply(calc_change, axis=1)
+
+# Měny (fixní pro stabilitu)
 fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
+df["Hodnota_CZK"] = df.apply(lambda x: x["Ks"] * x["Aktuální_Cena"] * fx.get(x["Měna"], 1.0), axis=1)
+df["Investice_CZK"] = df.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1.0), axis=1)
 
-# Výpočty (bezpečnější syntaxe pro Pandas)
-df["Hodnota_CZK"] = df.apply(lambda x: float(x["Ks"]) * float(x["Aktuální_Cena"]) * fx.get(x["Měna"], 1.0), axis=1)
-df["Investice_CZK"] = df.apply(lambda x: float(x["Ks"]) * float(x[col_price]) * fx.get(x["Měna"], 1.0), axis=1)
-df["Zisk_CZK"] = df["Hodnota_CZK"] - df["Investice_CZK"]
-df.loc[:, "Zisk_Proc"] = (df["Zisk_CZK"] / df["Investice_CZK"]) * 100
-
-# --- DASHBOARD ---
-m1, m2 = st.columns(2)
+# Metriky do Sidebar
+st.sidebar.divider()
 total_val = df["Hodnota_CZK"].sum()
-total_inv = df["Investice_CZK"].sum()
-total_profit = total_val - total_inv
-total_perc = (total_profit / total_inv) * 100 if total_inv != 0 else 0
+total_profit = total_val - df["Investice_CZK"].sum()
+st.sidebar.metric("Celková hodnota", f"{total_val:,.0f} CZK".replace(",", " "))
+st.sidebar.metric("Celkový zisk", f"{total_profit:,.0f} CZK".replace(",", " "), f"{(total_profit/df['Investice_CZK'].sum()*100):.2f}%")
 
-m1.metric("Celková hodnota portfolia", f"{total_val:,.0f} CZK")
-m2.metric("Celkový zisk / ztráta", f"{total_profit:,.0f} CZK", f"{total_perc:.2f}%")
+# --- HLAVNÍ TABULKA ---
+# Formátování pro zobrazení
+disp_df = df[["Název", "Ticker", "Ks", "Aktuální_Cena", "Zisk_%", "Hodnota_CZK"]].copy()
 
-st.divider()
-
-c1, c2 = st.columns(2)
-with c1:
-    fig_pie = px.pie(df, values='Hodnota_CZK', names='Sektor', title="Sektorové rozložení")
-    st.plotly_chart(fig_pie, use_container_width=True)
-with c2:
-    fig_bar = px.bar(df.sort_values("Zisk_CZK"), x="Zisk_CZK", y="Název", orientation='h', 
-                     title="Zisk v CZK", color="Zisk_CZK", color_continuous_scale='RdYlGn')
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-st.subheader("Detailní tabulka")
-st.dataframe(df[["Název", "Ticker", "Ks", "Aktuální_Cena", "Zisk_Proc", "Hodnota_CZK"]].style.format({
-    "Zisk_Proc": "{:.2f}%", 
-    "Hodnota_CZK": "{:,.0f}",
-    "Aktuální_Cena": "{:.2f}"
-}))
+# Úprava názvů na tučné pro Markdown (použijeme st.dataframe s column_config)
+st.dataframe(
+    disp_df,
+    hide_index=True,
+    use_container_width=True,
+    column_config={
+        "Název": st.column_config.TextColumn("Název", help="Tučně v seznamu", width="medium"),
+        "Ks": st.column_config.NumberColumn("Kusy", format="%d"),
+        "Aktuální_Cena": st.column_config.NumberColumn("Cena", format="%.2f"),
+        "Zisk_%": st.column_config.NumberColumn(f"Zisk ({time_frame})", format="%.2f %%"),
+        "Hodnota_CZK": st.column_config.NumberColumn("Hodnota CZK", format="%d")
+    }
+)
