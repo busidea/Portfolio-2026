@@ -1,43 +1,26 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
-st.set_page_config(page_title="Portfolio", layout="wide")
+st.set_page_config(page_title="Live Portfolio", layout="wide")
+
+# --- KONFIGURACE ODKAZU ---
+# Vaše tabulka převedená na přímý export dat
+SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 # --- STYLOVÁNÍ ---
 st.markdown("""
 <style>
-    /* Klíčová oprava: posunutí obsahu dolů, aby hlavička nebyla oříznutá */
-    .block-container { 
-        padding-top: 4rem !important; 
-        padding-bottom: 1rem !important; 
-    }
-    
-    .portfolio-table { 
-        width: 100%; 
-        border-collapse: collapse; 
-        font-family: 'Segoe UI', sans-serif; 
-        font-size: 15px; /* Trochu větší písmo pro čitelnost */
-    }
-    
+    .block-container { padding-top: 4rem !important; }
+    .portfolio-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; font-size: 15px; }
     .portfolio-table th { 
-        background-color: #1a1d20 !important; 
-        color: white !important; 
-        padding: 12px 10px; 
-        text-align: right; 
-        border: 1px solid #343a40;
-        font-weight: bold;
+        background-color: #000000 !important; color: white !important; 
+        padding: 12px 10px; text-align: right; border: 1px solid #333; font-weight: bold;
     }
-    
     .portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left !important; }
-    
-    /* Vzdušnější řádky podle původního scriptu */
-    .portfolio-table td { 
-        padding: 8px 10px; 
-        border-bottom: 1px solid #dee2e6; 
-        line-height: 1.4; 
-    }
-    
+    .portfolio-table td { padding: 8px 10px; border-bottom: 1px solid #dee2e6; line-height: 1.4; }
     .num { text-align: right !important; }
     .pos { color: #28a745; font-weight: bold; }
     .neg { color: #dc3545; font-weight: bold; }
@@ -47,121 +30,129 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATA ---
-def get_data():
-    data = [
-        ["Heidelberg Materials", "HEI.DE", 800, "Stavební", "EUR", 37.45, 28.4, 2.6],
-        ["HEIJMANS", "HEIJM.AS", 1162, "Stavební", "EUR", 7.63, 3.77, 0.8],
-        ["ČEZ", "CEZ.PR", 750, "Energetika", "CZK", 100, 100, 52.0],
-        ["ALPHABET", "GOOGL", 100, "Technologie", "USD", 133.34, 123.25, 0.2],
-        ["VIG", "VIG.PR", 500, "Pojišťovnictví", "CZK", 25.59, 24.328, 1.25],
-        ["KOMERČNÍ BANKA", "KOMB.PR", 400, "Bankovnictví", "CZK", 657.91, 657.91, 60.0],
-        ["MONETA", "MONET.PR", 2500, "Bankovnictví", "CZK", 81.1, 81.1, 9.0],
-        ["Siemens Healthineers", "SHL.DE", 600, "Zdravotní", "EUR", 45.67, 38.81, 0.95],
-        ["VOLKSWAGEN", "VOW3.DE", 150, "Auto", "EUR", 237, 237, 8.7],
-        ["PALANTIR", "PLTR", 100, "Software", "USD", 41, 41, 0.0],
-        ["ETF BOTZ", "BOTZ", 400, "AI", "USD", 22.82, 19.75, 0.05],
-        ["HPE", "HPE", 500, "IT", "USD", 19.6, 18.046, 0.13],
-        ["ETF SPEU", "SPEU", 200, "ETF", "USD", 35.08, 34.57, 0.4],
-        ["High Templar Tech", "HTT", 1700, "Fintech", "USD", 6.4, 5.32, 0.0],
-        ["BASF", "BAS.DE", 134, "Chemie", "EUR", 30, 30, 3.4],
-        ["NOKIA", "NOKIA.HE", 1100, "Telco", "EUR", 4.16, 3.17, 0.13],
-        ["META", "META", 10, "Soc. sítě", "USD", 647, 647, 2.0],
-        ["GSK", "GSK", 100, "Farmacie", "GBP", 30, 20.22, 0.58],
-        ["ETF EPI", "EPI", 100, "Indie", "USD", 37, 28.58, 0.1],
-        ["Novo Nordisk", "NOVO-B.CO", 200, "Farmacie", "DKK", 50, 40.83, 9.4],
-        ["ETF EWU", "EWU", 100, "UK", "USD", 14.22, 7.855, 0.5],
-        ["GRAY TV", "GTN", 600, "Média", "USD", 11.89, 9.19, 0.0],
-        ["Pfizer", "PFE", 100, "Farmacie", "USD", 27, 21.43, 1.68],
-        ["STMicro", "STMPA.PA", 100, "Polovodiče", "EUR", 35, 23.4, 0.24],
-        ["EHANG", "EH", 200, "EVTOL", "USD", 16.5, 14.73, 0.0]
-    ]
-    return pd.DataFrame(data, columns=["Název", "Ticker", "Ks", "Sektor", "Měna", "Cena_Std", "Cena_Opce", "Divi_Net"])
-
 def format_cz(value, decimals=2):
-    if pd.isna(value): return "-"
-    return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
+    try:
+        return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
+    except:
+        return "0"
 
-# --- LOGIKA ---
-df = get_data()
+# --- NAČÍTÁNÍ DAT Z GOOGLE SHEETS ---
+@st.cache_data(ttl=300) # Data z tabulky se osvěží každých 5 minut
+def load_sheet_data():
+    df_sheet = pd.read_csv(SHEET_URL)
+    # Vyčištění dat (odstranění prázdných řádků)
+    df_sheet = df_sheet.dropna(subset=['Ticker'])
+    return df_sheet
 
-# SIDEBAR (Nastavení defaultů dle požadavku)
-st.sidebar.title("PORTFOLIO")
-view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
-time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"], index=4)
-sort_col = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota_CZK", "Zisk_%", "Ks", "TC"], index=1)
-sort_asc = st.sidebar.checkbox("Vzestupně", value=False)
-
-col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
-
+# --- NAČÍTÁNÍ DAT Z BURZY ---
 @st.cache_data(ttl=600)
-def fetch_data(tickers):
-    curr, hist = {}, {}
+def fetch_market_data(tickers):
+    results = {}
+    hist_data = {}
     for t in tickers:
         try:
             tk = yf.Ticker(t)
+            # Aktuální cena a info
+            info = tk.info
             h = tk.history(period="1y")
-            if not h.empty:
-                hist[t] = h
-                curr[t] = h["Close"].iloc[-1]
-                prev = h["Close"].iloc[-2] if len(h) > 1 else h["Close"].iloc[-1]
-                curr[t + "_diff"] = curr[t] - prev
-            else: curr[t], curr[t + "_diff"] = 0.0, 0.0
-        except: curr[t], curr[t + "_diff"] = 0.0, 0.0
-    return curr, hist
+            
+            # Automatická dividenda (zkusíme několik zdrojů v info)
+            div = info.get('trailingAnnualDividendRate')
+            if div is None:
+                yield_pc = info.get('dividendYield')
+                if yield_pc:
+                    div = info.get('currentPrice', 0) * yield_pc
+                else:
+                    div = 0.0
+            
+            results[t] = {
+                "shortName": info.get('shortName', t),
+                "price": info.get('currentPrice') or (h['Close'].iloc[-1] if not h.empty else 0),
+                "div": div or 0.0,
+                "currency": info.get('currency', 'USD'),
+                "diff": (h['Close'].iloc[-1] - h['Close'].iloc[-2]) if len(h) > 1 else 0
+            }
+            hist_data[t] = h
+        except:
+            results[t] = {"shortName": t, "price": 0, "div": 0, "currency": "USD", "diff": 0}
+    return results, hist_data
 
-with st.spinner('Aktualizuji data...'):
-    curr_prices, hist_data = fetch_data(df["Ticker"].tolist())
-    df["TC"] = df["Ticker"].map(lambda x: curr_prices.get(x, 0))
-    df["Diff"] = df["Ticker"].map(lambda x: curr_prices.get(x + "_diff", 0))
-
-def calc_change(row):
-    t = row["Ticker"]
-    if t not in hist_data: return 0.0
-    h = hist_data[t]["Close"]
-    if time_frame == "1 den": ref = h.iloc[-2] if len(h)>1 else h.iloc[-1]
-    elif time_frame == "1 týden": ref = h.iloc[-5] if len(h)>5 else h.iloc[0]
-    elif time_frame == "1 měsíc": ref = h.iloc[-21] if len(h)>21 else h.iloc[0]
-    elif time_frame == "1 rok": ref = h.iloc[0]
-    else: ref = row[col_price]
-    return ((row["TC"] - ref) / ref) * 100 if ref != 0 else 0
-
-df["Zisk_%"] = df.apply(calc_change, axis=1)
-
-fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
-df["Hodnota_CZK"] = df.apply(lambda x: x["Ks"] * x["TC"] * fx.get(x["Měna"], 1.0), axis=1)
-df["Inv_CZK"] = df.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1.0), axis=1)
-df["Divi_Celkem_CZK"] = df.apply(lambda x: x["Ks"] * x["Divi_Net"] * fx.get(x["Měna"], 1.0), axis=1)
-
-# APLIKACE ŘAZENÍ
-df = df.sort_values(by=sort_col, ascending=sort_asc)
-
-# Sidebar metriky
-st.sidebar.divider()
-st.sidebar.metric("Celková hodnota", format_cz(df["Hodnota_CZK"].sum(), 0) + " CZK")
-st.sidebar.metric("Roční dividendy", format_cz(df["Divi_Celkem_CZK"].sum(), 0) + " CZK")
-st.sidebar.metric("Celkový zisk", format_cz(df["Hodnota_CZK"].sum() - df["Inv_CZK"].sum(), 0) + " CZK")
-
-# --- VÝSTUPNÍ TABULKA ---
-html = "<table class='portfolio-table'><thead><tr>"
-html += "<th>Název titulu</th><th>Ticker</th><th class='num'>KS</th><th class='num'>TC</th><th class='num'>Hodnota CZK</th>"
-html += "<th class='num'>Zisk %</th><th class='num'>Dividenda</th><th class='num'>Div. celkem CZK</th>"
-html += "</tr></thead><tbody>"
-
-for _, r in df.iterrows():
-    c_class = "pos" if r["Diff"] >= 0 else "neg"
-    z_class = "pos" if r["Zisk_%"] >= 0 else "neg"
+# --- HLAVNÍ LOGIKA ---
+try:
+    df_base = load_sheet_data()
+    tickers = df_base["Ticker"].unique().tolist()
     
-    html += f"<tr>"
-    html += f"<td class='stock-name'>{r['Název']}</td>"
-    html += f"<td>{r['Ticker']}</td>"
-    html += f"<td class='num highlight'>{format_cz(r['Ks'], 0)}</td>"
-    html += f"<td class='num {c_class}'>{format_cz(r['TC'])}</td>"
-    html += f"<td class='num highlight'>{format_cz(r['Hodnota_CZK'], 0)}</td>"
-    html += f"<td class='num {z_class}'>{format_cz(r['Zisk_%'])} %</td>"
-    html += f"<td class='num'>{format_cz(r['Divi_Net'])}</td>"
-    html += f"<td class='num'>{format_cz(r['Divi_Celkem_CZK'], 0)}</td>"
-    html += "</tr>"
+    with st.spinner('Stahuji data z burzy a Google tabulky...'):
+        market_info, historicals = fetch_market_data(tickers)
 
-html += "</tbody></table>"
-st.write(html, unsafe_allow_html=True)
+    # Propojení dat
+    df_base["Název"] = df_base["Ticker"].map(lambda x: market_info[x]["shortName"])
+    df_base["TC"] = df_base["Ticker"].map(lambda x: market_info[x]["price"])
+    df_base["Měna"] = df_base["Ticker"].map(lambda x: market_info[x]["currency"])
+    df_base["Divi_Auto"] = df_base["Ticker"].map(lambda x: market_info[x]["div"])
+    df_base["Diff"] = df_base["Ticker"].map(lambda x: market_info[x]["diff"])
+
+    # Sidebar ovladače
+    st.sidebar.title("PORTFOLIO")
+    view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
+    time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"], index=4)
+    sort_col = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota_CZK", "Zisk_%", "Ks", "TC"], index=1)
+    sort_asc = st.sidebar.checkbox("Vzestupně", value=False)
+
+    col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
+
+    # Výpočty
+    fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
+    
+    def calc_zisk(row):
+        t = row["Ticker"]
+        if t not in historicals or historicals[t].empty: return 0.0
+        h = historicals[t]["Close"]
+        if time_frame == "1 den": ref = h.iloc[-2] if len(h)>1 else h.iloc[-1]
+        elif time_frame == "1 týden": ref = h.iloc[-5] if len(h)>5 else h.iloc[0]
+        elif time_frame == "1 měsíc": ref = h.iloc[-21] if len(h)>21 else h.iloc[0]
+        elif time_frame == "1 rok": ref = h.iloc[0]
+        else: ref = row[col_price]
+        return ((row["TC"] - ref) / ref) * 100 if ref != 0 else 0
+
+    df_base["Zisk_%"] = df_base.apply(calc_zisk, axis=1)
+    df_base["Hodnota_CZK"] = df_base.apply(lambda x: x["Ks"] * x["TC"] * fx.get(x["Měna"], 1.0), axis=1)
+    df_base["Inv_CZK"] = df_base.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1.0), axis=1)
+    df_base["Divi_Celkem_CZK"] = df_base.apply(lambda x: x["Ks"] * x["Divi_Auto"] * fx.get(x["Měna"], 1.0), axis=1)
+
+    # Seřazení
+    df_final = df_base.sort_values(by=sort_col, ascending=sort_asc)
+
+    # Sidebar metriky
+    st.sidebar.divider()
+    st.sidebar.metric("Celková hodnota", format_cz(df_final["Hodnota_CZK"].sum(), 0) + " CZK")
+    st.sidebar.metric("Odhad dividend (rok)", format_cz(df_final["Divi_Celkem_CZK"].sum(), 0) + " CZK")
+    st.sidebar.metric("Celkový zisk", format_cz(df_final["Hodnota_CZK"].sum() - df_final["Inv_CZK"].sum(), 0) + " CZK")
+
+    # --- HTML VÝSTUP ---
+    html = "<table class='portfolio-table'><thead><tr>"
+    html += "<th>Název titulu</th><th>Ticker</th><th class='num'>KS</th><th class='num'>TC</th><th class='num'>Hodnota CZK</th>"
+    html += "<th class='num'>Zisk %</th><th class='num'>Dividenda</th><th class='num'>Div. celkem CZK</th>"
+    html += "</tr></thead><tbody>"
+
+    for _, r in df_final.iterrows():
+        c_class = "pos" if r["Diff"] >= 0 else "neg"
+        z_class = "pos" if r["Zisk_%"] >= 0 else "neg"
+        
+        html += f"<tr>"
+        html += f"<td class='stock-name'>{r['Název']}</td>"
+        html += f"<td>{r['Ticker']}</td>"
+        html += f"<td class='num highlight'>{format_cz(r['Ks'], 0)}</td>"
+        html += f"<td class='num {c_class}'>{format_cz(r['TC'])}</td>"
+        html += f"<td class='num highlight'>{format_cz(r['Hodnota_CZK'], 0)}</td>"
+        html += f"<td class='num {z_class}'>{format_cz(r['Zisk_%'])} %</td>"
+        html += f"<td class='num'>{format_cz(r['Divi_Auto'])}</td>"
+        html += f"<td class='num'>{format_cz(r['Divi_Celkem_CZK'], 0)}</td>"
+        html += "</tr>"
+
+    html += "</tbody></table>"
+    st.write(html, unsafe_allow_html=True)
+
+except Exception as e:
+    st.error(f"Chyba při načítání dat: {e}")
+    st.info("Zkontrolujte, zda má tabulka sloupce: Ticker, Ks, Cena_Std, Cena_Opce")
