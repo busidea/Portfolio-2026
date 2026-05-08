@@ -4,17 +4,26 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
-# --- STYLOVÁNÍ ---
+# --- KOMPAKTNÍ STYLOVÁNÍ A TMAVÁ HLAVIČKA ---
 st.markdown("""
 <style>
-    /* O něco větší horní okraj, aby hlavička nebyla oříznutá */
-    .block-container { padding-top: 3.5rem !important; padding-bottom: 0rem !important; }
+    /* Maximální využití plochy */
+    .block-container { padding-top: 2.5rem !important; padding-bottom: 0rem !important; }
     
-    /* Vylepšení vzhledu tabulky */
-    [data-testid="stDataFrame"] {
-        border: 1px solid #e6e9ef;
-        border-radius: 4px;
+    /* Vynucení černé hlavičky s bílým písmem */
+    [data-testid="stDataFrame"] th {
+        background-color: #1a1d20 !important;
+        color: white !important;
     }
+    
+    /* Zúžení řádků pro "jeden pohled" */
+    [data-testid="stDataFrame"] td {
+        padding: 2px 5px !important;
+        line-height: 1.1 !important;
+    }
+
+    /* Skrytí Streamlit lišty u tabulky */
+    [data-testid="stElementToolbar"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,7 +80,7 @@ def fetch_data(tickers):
         except: curr[t], diffs[t] = 0, 0
     return curr, diffs
 
-with st.spinner('Aktualizuji data...'):
+with st.spinner('Aktualizuji...'):
     prices, diffs = fetch_data(df["Ticker"].tolist())
     df["TC"] = df["Ticker"].map(prices)
     df["_diff"] = df["Ticker"].map(diffs)
@@ -82,41 +91,30 @@ df["Inv_CZK"] = df.apply(lambda x: x["KS"] * x[col_price] * fx.get(x["Měna"], 1
 df["Zisk %"] = ((df["TC"] - df[col_price]) / df[col_price] * 100)
 df["Div. celkem CZK"] = df.apply(lambda x: x["KS"] * x["Dividenda"] * fx.get(x["Měna"], 1.0), axis=1)
 
-# Seřazení a výběr sloupců
+# Finální DF
 final_df = df[["Název", "Ticker", "KS", "TC", "Hodnota CZK", "Zisk %", "Dividenda", "Div. celkem CZK", "_diff"]].copy()
 
-# --- STYLIZACE ---
+# --- STYLOVÁNÍ ---
 def apply_styles(styler):
-    # Barva Zisku
     styler.map(lambda v: f'color: {"#28a745" if v > 0 else "#dc3545"}; font-weight: bold', subset=['Zisk %'])
-    # Barva TC podle schovaného _diff
     styler.apply(lambda row: [f'color: {"#28a745" if row["_diff"] >= 0 else "#dc3545"}; font-weight: bold' if i == 3 else '' for i, v in enumerate(row)], axis=1)
-    # Tučné názvy, KS a Hodnoty
     styler.map(lambda v: 'font-weight: bold', subset=['KS', 'Hodnota CZK', 'Název'])
-    # Formátování čísel
     styler.format({
         'KS': '{:,.0f}', 'TC': '{:,.2f}', 'Hodnota CZK': '{:,.0f}',
         'Zisk %': '{:,.2f} %', 'Dividenda': '{:,.2f}', 'Div. celkem CZK': '{:,.0f}'
     }, decimal=',', thousands=' ')
     return styler
 
-# --- ZOBRAZENÍ TABULKY ---
-# Použití column_config k absolutnímu skrytí _diff a úpravě šířek
+# --- VÝSTUP ---
 st.dataframe(
     apply_styles(final_df.style),
     use_container_width=True,
-    height=910, # Zvýšeno tak, aby 25 řádků bylo vidět bez scrollování
+    height=860, # Optimální výška pro 25 řádků v kompaktním režimu
     hide_index=True,
     column_config={
-        "_diff": None, # Toto sloupec totálně vymaže ze zobrazení
+        "_diff": None,
         "Název": st.column_config.TextColumn(width="medium"),
-        "Ticker": st.column_config.TextColumn(width="small"),
-        "KS": st.column_config.NumberColumn(width="small"),
-        "TC": st.column_config.NumberColumn(width="small"),
-        "Hodnota CZK": st.column_config.NumberColumn(width="medium"),
-        "Zisk %": st.column_config.NumberColumn(width="small"),
-        "Dividenda": st.column_config.NumberColumn(width="small"),
-        "Div. celkem CZK": st.column_config.NumberColumn(width="medium"),
+        "Div. celkem CZK": st.column_config.NumberColumn(format="%.0f", width="medium"),
     }
 )
 
