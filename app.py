@@ -4,29 +4,38 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
-# --- STYLOVÁNÍ (Vychází z vašeho oblíbeného scriptu) ---
+# --- STYLOVÁNÍ ---
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem !important; padding-bottom: 0rem !important; }
-    .portfolio-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; font-size: 13.5px; }
+    /* Klíčová oprava: posunutí obsahu dolů, aby hlavička nebyla oříznutá */
+    .block-container { 
+        padding-top: 4rem !important; 
+        padding-bottom: 1rem !important; 
+    }
     
-    /* Výrazná tmavá hlavička s bílým písmem */
+    .portfolio-table { 
+        width: 100%; 
+        border-collapse: collapse; 
+        font-family: 'Segoe UI', sans-serif; 
+        font-size: 15px; /* Trochu větší písmo pro čitelnost */
+    }
+    
     .portfolio-table th { 
-        background-color: #000000 !important; 
+        background-color: #1a1d20 !important; 
         color: white !important; 
-        padding: 8px 10px; 
+        padding: 12px 10px; 
         text-align: right; 
-        border: 1px solid #333;
+        border: 1px solid #343a40;
         font-weight: bold;
     }
     
     .portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left !important; }
     
-    /* Agresivnější smrsknutí řádků pro "jeden pohled" */
+    /* Vzdušnější řádky podle původního scriptu */
     .portfolio-table td { 
-        padding: 3px 10px; 
+        padding: 8px 10px; 
         border-bottom: 1px solid #dee2e6; 
-        line-height: 1.2; 
+        line-height: 1.4; 
     }
     
     .num { text-align: right !important; }
@@ -54,7 +63,7 @@ def get_data():
         ["ETF BOTZ", "BOTZ", 400, "AI", "USD", 22.82, 19.75, 0.05],
         ["HPE", "HPE", 500, "IT", "USD", 19.6, 18.046, 0.13],
         ["ETF SPEU", "SPEU", 200, "ETF", "USD", 35.08, 34.57, 0.4],
-        ["High Templar Tech", "HTT", 1700, "Fintech", "USD", 6.4, 5.32, 0.0], # Opraveno HTT
+        ["High Templar Tech", "HTT", 1700, "Fintech", "USD", 6.4, 5.32, 0.0],
         ["BASF", "BAS.DE", 134, "Chemie", "EUR", 30, 30, 3.4],
         ["NOKIA", "NOKIA.HE", 1100, "Telco", "EUR", 4.16, 3.17, 0.13],
         ["META", "META", 10, "Soc. sítě", "USD", 647, 647, 2.0],
@@ -76,14 +85,10 @@ def format_cz(value, decimals=2):
 # --- LOGIKA ---
 df = get_data()
 
-# SIDEBAR (Nastavení defaultů)
+# SIDEBAR (Nastavení defaultů dle požadavku)
 st.sidebar.title("PORTFOLIO")
 view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
-
-# Změna: Default "1 den" (index 4)
 time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"], index=4)
-
-# Změna: Default "Hodnota_CZK" (index 1)
 sort_col = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota_CZK", "Zisk_%", "Ks", "TC"], index=1)
 sort_asc = st.sidebar.checkbox("Vzestupně", value=False)
 
@@ -105,7 +110,7 @@ def fetch_data(tickers):
         except: curr[t], curr[t + "_diff"] = 0.0, 0.0
     return curr, hist
 
-with st.spinner('Aktualizuji...'):
+with st.spinner('Aktualizuji data...'):
     curr_prices, hist_data = fetch_data(df["Ticker"].tolist())
     df["TC"] = df["Ticker"].map(lambda x: curr_prices.get(x, 0))
     df["Diff"] = df["Ticker"].map(lambda x: curr_prices.get(x + "_diff", 0))
@@ -134,7 +139,7 @@ df = df.sort_values(by=sort_col, ascending=sort_asc)
 # Sidebar metriky
 st.sidebar.divider()
 st.sidebar.metric("Celková hodnota", format_cz(df["Hodnota_CZK"].sum(), 0) + " CZK")
-st.sidebar.metric("Roční dividendy (net)", format_cz(df["Divi_Celkem_CZK"].sum(), 0) + " CZK")
+st.sidebar.metric("Roční dividendy", format_cz(df["Divi_Celkem_CZK"].sum(), 0) + " CZK")
 st.sidebar.metric("Celkový zisk", format_cz(df["Hodnota_CZK"].sum() - df["Inv_CZK"].sum(), 0) + " CZK")
 
 # --- VÝSTUPNÍ TABULKA ---
