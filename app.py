@@ -4,46 +4,47 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
-# --- KOMPAKTNÍ STYLOVÁNÍ (CSS) ---
+# --- STYLOVÁNÍ (CSS) ---
 st.markdown("""
 <style>
-    /* Posun celého obsahu co nejvýše */
-    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+    .block-container { padding-top: 1.5rem !important; }
     
-    /* Definice tabulky - extrémně kompaktní */
     .portfolio-table { 
         width: 100%; 
         border-collapse: collapse; 
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        font-size: 14px; /* O něco menší písmo pro úsporu místa */
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 14px;
     }
+    
+    /* Stylování hlavičky */
     .portfolio-table th { 
-        background-color: #f8f9fb; 
-        padding: 4px 10px; 
+        background-color: #343a40; /* Tmavá hlavička */
+        color: white;
+        padding: 6px 10px; 
         text-align: left; 
-        border-bottom: 2px solid #333;
-        font-weight: bold;
+        font-weight: 600;
+        border: 1px solid #454d55;
     }
+    
+    /* Stylování řádků */
     .portfolio-table td { 
-        padding: 2px 10px; /* Minimální vertikální padding */
-        border-bottom: 1px solid #eee;
-        line-height: 1.2;
+        padding: 3px 10px; /* O 1mm více než minule */
+        border-bottom: 1px solid #dee2e6;
+        line-height: 1.3;
     }
     
-    /* Zarovnání čísel doprava */
-    .num { text-align: right; }
+    /* Zarovnání čísel doprava v hlavičce i těle */
+    .num { text-align: right !important; }
     
-    /* Barvy a tučnost */
     .pos { color: #28a745; font-weight: bold; }
     .neg { color: #dc3545; font-weight: bold; }
-    .stock-name { font-weight: bold; color: #1f77b4; text-align: left; }
+    .stock-name { font-weight: bold; color: #0056b3; text-align: left; }
     
-    /* Zúžení postranního panelu pro více místa na tabulku */
-    [data-testid="stSidebar"] { width: 250px !important; }
+    tr:hover { background-color: #f8f9fa; } /* Jemné zvýraznění řádku při najetí */
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATA ---
+# --- DATA (beze změny) ---
 def get_data():
     data = [
         ["Heidelberg Materials", "HEI.DE", 800, "Stavební materiály", "EUR", 37.45, 28.4],
@@ -78,10 +79,9 @@ def format_cz(value, decimals=2):
     if pd.isna(value): return "-"
     return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" ", " ")
 
-# --- LOGIKA DATA ---
+# --- LOGIKA ---
 df = get_data()
 
-# SIDEBAR
 st.sidebar.title("PORTFOLIO")
 view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
 time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"])
@@ -103,7 +103,7 @@ def fetch_data(tickers):
         except: curr[t], curr[t + "_diff"] = 0.0, 0.0
     return curr, hist
 
-with st.spinner('Načítám...'):
+with st.spinner('Aktualizuji...'):
     curr_prices, hist_data = fetch_data(df["Ticker"].tolist())
     df["Aktuální_Cena"] = df["Ticker"].map(lambda x: curr_prices.get(x, 0))
     df["Diff"] = df["Ticker"].map(lambda x: curr_prices.get(x + "_diff", 0))
@@ -121,12 +121,10 @@ def calc_change(row):
 
 df["Zisk_%"] = df.apply(calc_change, axis=1)
 
-# Měny a celky
 fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
 df["Hodnota_CZK"] = df.apply(lambda x: x["Ks"] * x["Aktuální_Cena"] * fx.get(x["Měna"], 1.0), axis=1)
 df["Inv_CZK"] = df.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1.0), axis=1)
 
-# Sidebar metriky
 st.sidebar.divider()
 total_val = df["Hodnota_CZK"].sum()
 st.sidebar.metric("Celková hodnota", format_cz(total_val, 0) + " CZK")
@@ -134,9 +132,14 @@ prof = total_val - df["Inv_CZK"].sum()
 prof_p = (prof / df["Inv_CZK"].sum() * 100) if df["Inv_CZK"].sum() != 0 else 0
 st.sidebar.metric("Celkový zisk", format_cz(prof, 0) + " CZK", f"{prof_p:.2f} %")
 
-# --- VÝSTUPNÍ HTML TABULKA ---
+# --- HTML TABULKA S HLAVIČKOU ---
 html = "<table class='portfolio-table'><thead><tr>"
-html += "<th>Název</th><th class='num'>Ticker</th><th class='num'>Kusy</th><th class='num'>Cena</th><th class='num'>Zisk %</th><th class='num'>Hodnota CZK</th>"
+html += "<th>Název titulu</th>"
+html += "<th class='num'>Ticker</th>"
+html += "<th class='num'>Počet ks</th>"
+html += "<th class='num'>Aktuální cena</th>"
+html += "<th class='num'>Zisk / Ztráta %</th>"
+html += "<th class='num'>Hodnota CZK</th>"
 html += "</tr></thead><tbody>"
 
 for _, r in df.iterrows():
