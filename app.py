@@ -4,12 +4,11 @@ import pandas as pd
 import plotly.express as px
 
 st.set_page_config(page_title="Portfolio 2026", layout="wide")
-
-# --- DATA ---
+# --- DATA --- (Aktualizovaný ticker pro Heijmans)
 def get_data():
     data = [
         ["Heidelberg Materials", "HEI.DE", 800, "Stavební materiály", "EUR", 37.45, 28.4],
-        ["HEIJMANS", "HEIJ.AS", 1162, "Stavebnictví", "EUR", 7.63, 3.77],
+        ["HEIJMANS", "HEIJM.AS", 1162, "Stavebnictví", "EUR", 7.63, 3.77], # Změněno na HEIJM.AS
         ["ČEZ", "CEZ.PR", 750, "Energetika", "CZK", 100, 100],
         ["ALPHABET", "GOOGL", 100, "Technologie", "USD", 133.34, 123.25],
         ["VIG", "VIG.PR", 500, "Pojišťovnictví", "CZK", 25.59, 24.328],
@@ -36,21 +35,26 @@ def get_data():
     ]
     return pd.DataFrame(data, columns=["Název", "Ticker", "Ks", "Sektor", "Měna", "Cena_Std", "Cena_Opce"])
 
-# --- FUNKCE PRO CENY ---
+# --- FUNKCE PRO CENY --- (Robustnější verze)
 def fetch_prices(tickers):
     prices = {}
     for t in tickers:
         try:
-            # Stahujeme po jednom, aby chyba jednoho neshodila vše
-            d = yf.Ticker(t).history(period="1d")
-            if not d.empty:
-                prices[t] = d["Close"].iloc[-1]
-            else:
-                prices[t] = 0.0
-        except:
+            ticker_obj = yf.Ticker(t)
+            # Zkusíme nejdřív fast_info (rychlé a stabilní)
+            price = ticker_obj.fast_info['last_price']
+            
+            # Pokud fast_info selže nebo vrátí nesmysl, zkusíme historii
+            if price is None or price == 0 or pd.isna(price):
+                d = ticker_obj.history(period="1d")
+                if not d.empty:
+                    price = d["Close"].iloc[-1]
+                else:
+                    price = 0.0
+            prices[t] = price
+        except Exception as e:
             prices[t] = 0.0
     return prices
-
 # --- HLAVNÍ LOGIKA ---
 st.title("📈 Moje Portfolio 2026")
 
