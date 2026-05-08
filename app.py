@@ -4,17 +4,31 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
-# --- STYLOVÁNÍ ---
+# --- STYLOVÁNÍ (Vychází z vašeho oblíbeného scriptu) ---
 st.markdown("""
 <style>
-    .block-container { padding-top: 3.5rem !important; }
-    .portfolio-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
+    .block-container { padding-top: 1.5rem !important; padding-bottom: 0rem !important; }
+    .portfolio-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; font-size: 13.5px; }
+    
+    /* Výrazná tmavá hlavička s bílým písmem */
     .portfolio-table th { 
-        background-color: #343a40; color: white; padding: 10px; 
-        text-align: right; border: 1px solid #454d55;
+        background-color: #000000 !important; 
+        color: white !important; 
+        padding: 8px 10px; 
+        text-align: right; 
+        border: 1px solid #333;
+        font-weight: bold;
     }
+    
     .portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left !important; }
-    .portfolio-table td { padding: 5px 10px; border-bottom: 1px solid #dee2e6; line-height: 1.4; }
+    
+    /* Agresivnější smrsknutí řádků pro "jeden pohled" */
+    .portfolio-table td { 
+        padding: 3px 10px; 
+        border-bottom: 1px solid #dee2e6; 
+        line-height: 1.2; 
+    }
+    
     .num { text-align: right !important; }
     .pos { color: #28a745; font-weight: bold; }
     .neg { color: #dc3545; font-weight: bold; }
@@ -40,7 +54,7 @@ def get_data():
         ["ETF BOTZ", "BOTZ", 400, "AI", "USD", 22.82, 19.75, 0.05],
         ["HPE", "HPE", 500, "IT", "USD", 19.6, 18.046, 0.13],
         ["ETF SPEU", "SPEU", 200, "ETF", "USD", 35.08, 34.57, 0.4],
-        ["HITECH GLOBAL (QD)", "HTT", 1700, "Fintech", "USD", 6.4, 5.32, 0.0], # Opravený ticker HTT
+        ["High Templar Tech", "HTT", 1700, "Fintech", "USD", 6.4, 5.32, 0.0], # Opraveno HTT
         ["BASF", "BAS.DE", 134, "Chemie", "EUR", 30, 30, 3.4],
         ["NOKIA", "NOKIA.HE", 1100, "Telco", "EUR", 4.16, 3.17, 0.13],
         ["META", "META", 10, "Soc. sítě", "USD", 647, 647, 2.0],
@@ -62,11 +76,15 @@ def format_cz(value, decimals=2):
 # --- LOGIKA ---
 df = get_data()
 
-# SIDEBAR
+# SIDEBAR (Nastavení defaultů)
 st.sidebar.title("PORTFOLIO")
 view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
-time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"])
-sort_col = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota_CZK", "Zisk_%", "Ks", "TC"])
+
+# Změna: Default "1 den" (index 4)
+time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"], index=4)
+
+# Změna: Default "Hodnota_CZK" (index 1)
+sort_col = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota_CZK", "Zisk_%", "Ks", "TC"], index=1)
 sort_asc = st.sidebar.checkbox("Vzestupně", value=False)
 
 col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
@@ -131,7 +149,7 @@ for _, r in df.iterrows():
     
     html += f"<tr>"
     html += f"<td class='stock-name'>{r['Název']}</td>"
-    html += f"<td class='num'>{r['Ticker']}</td>"
+    html += f"<td>{r['Ticker']}</td>"
     html += f"<td class='num highlight'>{format_cz(r['Ks'], 0)}</td>"
     html += f"<td class='num {c_class}'>{format_cz(r['TC'])}</td>"
     html += f"<td class='num highlight'>{format_cz(r['Hodnota_CZK'], 0)}</td>"
