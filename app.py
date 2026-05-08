@@ -7,13 +7,9 @@ st.set_page_config(page_title="Portfolio", layout="wide")
 # --- STYLOVÁNÍ ---
 st.markdown("""
 <style>
-    /* Posun tabulky od horního okraje */
-    .block-container { padding-top: 3rem !important; }
-    
-    /* Vynucení tmavé hlavičky a lepších řádků pro st.dataframe */
-    [data-testid="stDataFrame"] {
-        border: 1px solid #343a40;
-    }
+    .block-container { padding-top: 1.5rem !important; padding-bottom: 0rem !important; }
+    /* Skrytí ovládacích prvků Streamlitu u tabulky pro čistší vzhled */
+    [data-testid="stElementToolbar"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,7 +42,7 @@ def get_data():
         ["STMicro", "STMPA.PA", 100, "EUR", 35, 23.4, 0.24],
         ["EHANG", "EH", 200, "USD", 16.5, 14.73, 0.0]
     ]
-    return pd.DataFrame(data, columns=["Název titulu", "Ticker", "KS", "Měna", "Cena_Std", "Cena_Opce", "Dividenda"])
+    return pd.DataFrame(data, columns=["Název", "Ticker", "KS", "Měna", "Cena_Std", "Cena_Opce", "Dividenda"])
 
 # --- LOGIKA ---
 df = get_data()
@@ -70,7 +66,7 @@ def fetch_data(tickers):
         except: curr[t], diffs[t] = 0, 0
     return curr, diffs
 
-with st.spinner('Aktualizuji data...'):
+with st.spinner('Aktualizuji...'):
     prices, diffs = fetch_data(df["Ticker"].tolist())
     df["TC"] = df["Ticker"].map(prices)
     df["_diff"] = df["Ticker"].map(diffs)
@@ -81,33 +77,26 @@ df["Inv_CZK"] = df.apply(lambda x: x["KS"] * x[col_price] * fx.get(x["Měna"], 1
 df["Zisk %"] = ((df["TC"] - df[col_price]) / df[col_price] * 100)
 df["Div. celkem CZK"] = df.apply(lambda x: x["KS"] * x["Dividenda"] * fx.get(x["Měna"], 1.0), axis=1)
 
-# Finální výběr sloupců v daném pořadí
-final_df = df[["Název titulu", "Ticker", "KS", "TC", "Hodnota CZK", "Zisk %", "Dividenda", "Div. celkem CZK", "_diff"]].copy()
+# Seřazení a výběr sloupců
+final_df = df[["Název", "Ticker", "KS", "TC", "Hodnota CZK", "Zisk %", "Dividenda", "Div. celkem CZK", "_diff"]].copy()
 
-# --- FORMÁTOVÁNÍ (Styler) ---
-def style_df(styler):
-    # Barva pro Zisk %
+# --- STYLIZACE TABULKY ---
+def apply_styles(styler):
     styler.map(lambda v: f'color: {"#28a745" if v > 0 else "#dc3545"}; font-weight: bold', subset=['Zisk %'])
-    # Barva pro TC (podle denní změny _diff)
+    # TC se barví podle skrytého sloupce _diff
     styler.apply(lambda row: [f'color: {"#28a745" if row["_diff"] >= 0 else "#dc3545"}; font-weight: bold' if i == 3 else '' for i, v in enumerate(row)], axis=1)
-    # Tučné písmo pro KS a Hodnotu
-    styler.map(lambda v: 'font-weight: bold', subset=['KS', 'Hodnota CZK', 'Název titulu'])
-    # Číselný formát s mezerami a čárkou
+    styler.map(lambda v: 'font-weight: bold', subset=['KS', 'Hodnota CZK', 'Název'])
     styler.format({
-        'KS': '{:,.0f}',
-        'TC': '{:,.2f}',
-        'Hodnota CZK': '{:,.0f}',
-        'Zisk %': '{:,.2f} %',
-        'Dividenda': '{:,.2f}',
-        'Div. celkem CZK': '{:,.0f}'
+        'KS': '{:,.0f}', 'TC': '{:,.2f}', 'Hodnota CZK': '{:,.0f}',
+        'Zisk %': '{:,.2f} %', 'Dividenda': '{:,.2f}', 'Div. celkem CZK': '{:,.0f}'
     }, decimal=',', thousands=' ')
     return styler
 
-# Zobrazení
+# ZOBRAZENÍ
 st.dataframe(
-    style_df(final_df.style).hide(subset=['_diff'], axis=1), 
-    use_container_width=True, 
-    height=800, # Dostatečná výška pro 25 řádků
+    apply_styles(final_df.style).hide(subset=['_diff'], axis=1),
+    use_container_width=True,
+    height=750, # Snížená výška pro kompaktnost
     hide_index=True
 )
 
