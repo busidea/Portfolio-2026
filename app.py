@@ -2,14 +2,11 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
 
 st.set_page_config(page_title="Portfolio 2026", layout="wide")
 
-# --- KONFIGURACE DAT ---
-@st.cache_data(ttl=3600)
-def get_portfolio_base():
-    # Název, Ticker, Ks, Sektor, Měna, Cena_Std, Cena_Opce
+# --- DATA ---
+def get_data():
     data = [
         ["Heidelberg Materials", "HEI.DE", 800, "Stavební materiály", "EUR", 37.45, 28.4],
         ["HEIJMANS", "HEIJ.AS", 1162, "Stavebnictví", "EUR", 7.63, 3.77],
@@ -39,85 +36,65 @@ def get_portfolio_base():
     ]
     return pd.DataFrame(data, columns=["Název", "Ticker", "Ks", "Sektor", "Měna", "Cena_Std", "Cena_Opce"])
 
-# --- LIVE KURZY MĚN ---
-@st.cache_data(ttl=3600)
-def get_fx_rates():
-    rates = {"CZK": 1.0}
-    for m in ["EUR", "USD", "GBP", "DKK"]:
-        try:
-            pair = f"{m}CZK=X"
-            data = yf.download(pair, period="1d", interval="1m", progress=False)
-            rates[m] = data["Close"].iloc[-1]
-        except:
-            # Záložní fixní kurzy pro případ výpadku Yahoo
-            backup = {"EUR": 25.3, "USD": 23.6, "GBP": 29.8, "DKK": 3.4}
-            rates[m] = backup[m]
-    return rates
-
-# --- LIVE CENY AKCIÍ ---
+# --- FUNKCE PRO CENY ---
 def fetch_prices(tickers):
-    data = yf.download(tickers, period="1d", progress=False)["Close"]
-    # Pokud je stažen jen jeden ticker, yfinance vrátí Series místo DataFrame
-    if len(tickers) == 1:
-        return {tickers[0]: data.iloc[-1]}
-    return {t: data[t].iloc[-1] for t in tickers}
+    prices = {}
+    for t in tickers:
+        try:
+            # Stahujeme po jednom, aby chyba jednoho neshodila vše
+            d = yf.Ticker(t).history(period="1d")
+            if not d.empty:
+                prices[t] = d["Close"].iloc[-1]
+            else:
+                prices[t] = 0.0
+        except:
+            prices[t] = 0.0
+    return prices
 
-# --- APLIKACE ---
-df = get_portfolio_base()
-fx = get_fx_rates()
-
+# --- HLAVNÍ LOGIKA ---
 st.title("📈 Moje Portfolio 2026")
 
+df = get_data()
 view_mode = st.sidebar.radio("Metrika nákupní ceny:", ["Standardní", "Včetně opcí"])
 col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
 
-# Načtení cen
-with st.spinner('Stahuji aktuální data z burz...'):
-    prices = fetch_prices(df["Ticker"].tolist())
-    df["Aktuální_Cena"] = df["Ticker"].map(prices)
+with st.spinner('Aktualizuji data...'):
+    current_prices = fetch_prices(df["Ticker"].tolist())
+    df["Aktuální_Cena"] = df["Ticker"].map(current_prices).astype(float)
 
-# Výpočty
-df["Hodnota_v_Měně"] = df["Ks"] * df["Aktuální_Cena"]
-df["Hodnota_CZK"] = df.apply(lambda x: x["Hodnota_v_Měně"] * fx.get(x["Měna"], 1), axis=1)
-df["Investice_CZK"] = df.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1), axis=1)
+# Fixní kurzy (dočasně pro stabilitu, než vyřešíme chybu s FX)
+fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
+
+# Výpočty (bezpečnější syntaxe pro Pandas)
+df["Hodnota_CZK"] = df.apply(lambda x: float(x["Ks"]) * float(x["Aktuální_Cena"]) * fx.get(x["Měna"], 1.0), axis=1)
+df["Investice_CZK"] = df.apply(lambda x: float(x["Ks"]) * float(x[col_price]) * fx.get(x["Měna"], 1.0), axis=1)
 df["Zisk_CZK"] = df["Hodnota_CZK"] - df["Investice_CZK"]
-df["Zisk_Proc"] = (df["Zisk_CZK"] / df["Investice_CZK"]) * 100
+df.loc[:, "Zisk_Proc"] = (df["Zisk_CZK"] / df["Investice_CZK"]) * 100
 
-# Horní metriky
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Celková hodnota", f"{df['Hodnota_CZK'].sum():,.0f} CZK")
-total_profit = df['Zisk_CZK'].sum()
-total_profit_perc = (total_profit / df['Investice_CZK'].sum()) * 100
-m2.metric("Celkový zisk/ztráta", f"{total_profit:,.0f} CZK", f"{total_profit_perc:.2f}%")
-m3.metric("Nejvýnosnější titul", df.loc[df['Zisk_Proc'].idxmax()]['Název'], f"{df['Zisk_Proc'].max():.1f}%")
-m4.metric("Dnešní kurz EUR", f"{fx['EUR']:.2f} CZK")
+# --- DASHBOARD ---
+m1, m2 = st.columns(2)
+total_val = df["Hodnota_CZK"].sum()
+total_inv = df["Investice_CZK"].sum()
+total_profit = total_val - total_inv
+total_perc = (total_profit / total_inv) * 100 if total_inv != 0 else 0
 
-# Grafy
+m1.metric("Celková hodnota portfolia", f"{total_val:,.0f} CZK")
+m2.metric("Celkový zisk / ztráta", f"{total_profit:,.0f} CZK", f"{total_perc:.2f}%")
+
+st.divider()
+
 c1, c2 = st.columns(2)
 with c1:
-    fig_pie = px.pie(df, values='Hodnota_CZK', names='Sektor', title="Rozložení dle sektorů", hole=0.4)
+    fig_pie = px.pie(df, values='Hodnota_CZK', names='Sektor', title="Sektorové rozložení")
     st.plotly_chart(fig_pie, use_container_width=True)
 with c2:
-    fig_profit = px.bar(df.sort_values("Zisk_CZK"), x="Zisk_CZK", y="Název", orientation='h',
-                         title="Zisk / Ztráta v CZK dle titulů",
-                         color="Zisk_CZK", color_continuous_scale='RdYlGn')
-    st.plotly_chart(fig_profit, use_container_width=True)
+    fig_bar = px.bar(df.sort_values("Zisk_CZK"), x="Zisk_CZK", y="Název", orientation='h', 
+                     title="Zisk v CZK", color="Zisk_CZK", color_continuous_scale='RdYlGn')
+    st.plotly_chart(fig_bar, use_container_width=True)
 
-# Tabulka
-st.subheader("Detailní přehled pozic")
-def color_profit(val):
-    color = 'green' if val > 0 else 'red'
-    return f'color: {color}'
-
-st.dataframe(df[["Název", "Sektor", "Ks", "Měna", "Aktuální_Cena", "Zisk_Proc", "Hodnota_CZK"]]
-             .style.format({"Zisk_Proc": "{:.2f}%", "Hodnota_CZK": "{:,.0f} CZK", "Aktuální_Cena": "{:,.2f}"})
-             .applymap(color_profit, subset=['Zisk_Proc']))
-
-# Benchmarky
-st.divider()
-st.subheader("Srovnání s hlavními indexy (relativní vývoj)")
-bench_choice = st.multiselect("Vyber indexy:", ["^GSPC", "^GDAXI", "PX.PR"], default=["^GSPC", "^GDAXI"])
-if bench_choice:
-    b_data = yf.download(bench_choice, period="1y")["Close"]
-    b_data_norm = b_data / b_data.iloc[0] * 100
-    st.line_chart(b_data_norm)
+st.subheader("Detailní tabulka")
+st.dataframe(df[["Název", "Ticker", "Ks", "Aktuální_Cena", "Zisk_Proc", "Hodnota_CZK"]].style.format({
+    "Zisk_Proc": "{:.2f}%", 
+    "Hodnota_CZK": "{:,.0f}",
+    "Aktuální_Cena": "{:.2f}"
+}))
