@@ -4,43 +4,16 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
-# --- STYLOVÁNÍ (CSS) ---
+# --- STYLOVÁNÍ ---
 st.markdown("""
 <style>
-    /* Maximální využití plochy a zamezení scrollování */
-    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+    /* Posun tabulky od horního okraje */
+    .block-container { padding-top: 3rem !important; }
     
-    .portfolio-table { 
-        width: 100%; 
-        border-collapse: collapse; 
-        font-family: 'Segoe UI', sans-serif;
-        font-size: 13.5px; 
-    }
-    
-    .portfolio-table th { 
-        background-color: #1a1d20 !important; /* Černá hlavička */
-        color: white !important;
-        padding: 6px 10px; 
-        text-align: right; 
-        font-weight: bold;
+    /* Vynucení tmavé hlavičky a lepších řádků pro st.dataframe */
+    [data-testid="stDataFrame"] {
         border: 1px solid #343a40;
     }
-    
-    .portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left !important; }
-    
-    .portfolio-table td { 
-        padding: 3px 10px; 
-        border-bottom: 1px solid #dee2e6;
-        line-height: 1.2;
-    }
-    
-    .num { text-align: right !important; }
-    .pos { color: #28a745; font-weight: bold; }
-    .neg { color: #dc3545; font-weight: bold; }
-    .stock-name { font-weight: bold; color: #000; }
-    .highlight { font-weight: bold; color: #000; }
-    
-    tr:hover { background-color: #f8f9fa; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,21 +46,14 @@ def get_data():
         ["STMicro", "STMPA.PA", 100, "EUR", 35, 23.4, 0.24],
         ["EHANG", "EH", 200, "USD", 16.5, 14.73, 0.0]
     ]
-    return pd.DataFrame(data, columns=["Název", "Ticker", "KS", "Měna", "Cena_Std", "Cena_Opce", "Dividenda"])
+    return pd.DataFrame(data, columns=["Název titulu", "Ticker", "KS", "Měna", "Cena_Std", "Cena_Opce", "Dividenda"])
 
 # --- LOGIKA ---
 df = get_data()
 
-# SIDEBAR OVLÁDÁNÍ
 st.sidebar.title("PORTFOLIO")
 view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
 time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"])
-
-st.sidebar.divider()
-# Funkční řazení přes sidebar
-sort_by = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota CZK", "Zisk %", "KS", "TC"])
-sort_order = st.sidebar.checkbox("Vzestupně", value=False)
-
 col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
 
 @st.cache_data(ttl=600)
@@ -104,7 +70,7 @@ def fetch_data(tickers):
         except: curr[t], diffs[t] = 0, 0
     return curr, diffs
 
-with st.spinner('Aktualizuji...'):
+with st.spinner('Aktualizuji data...'):
     prices, diffs = fetch_data(df["Ticker"].tolist())
     df["TC"] = df["Ticker"].map(prices)
     df["_diff"] = df["Ticker"].map(diffs)
@@ -115,39 +81,39 @@ df["Inv_CZK"] = df.apply(lambda x: x["KS"] * x[col_price] * fx.get(x["Měna"], 1
 df["Zisk %"] = ((df["TC"] - df[col_price]) / df[col_price] * 100)
 df["Div. celkem CZK"] = df.apply(lambda x: x["KS"] * x["Dividenda"] * fx.get(x["Měna"], 1.0), axis=1)
 
-# Aplikace řazení
-df = df.sort_values(by=sort_by, ascending=sort_order)
+# Finální výběr sloupců v daném pořadí
+final_df = df[["Název titulu", "Ticker", "KS", "TC", "Hodnota CZK", "Zisk %", "Dividenda", "Div. celkem CZK", "_diff"]].copy()
 
-def format_cz(value, decimals=2):
-    return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
+# --- FORMÁTOVÁNÍ (Styler) ---
+def style_df(styler):
+    # Barva pro Zisk %
+    styler.map(lambda v: f'color: {"#28a745" if v > 0 else "#dc3545"}; font-weight: bold', subset=['Zisk %'])
+    # Barva pro TC (podle denní změny _diff)
+    styler.apply(lambda row: [f'color: {"#28a745" if row["_diff"] >= 0 else "#dc3545"}; font-weight: bold' if i == 3 else '' for i, v in enumerate(row)], axis=1)
+    # Tučné písmo pro KS a Hodnotu
+    styler.map(lambda v: 'font-weight: bold', subset=['KS', 'Hodnota CZK', 'Název titulu'])
+    # Číselný formát s mezerami a čárkou
+    styler.format({
+        'KS': '{:,.0f}',
+        'TC': '{:,.2f}',
+        'Hodnota CZK': '{:,.0f}',
+        'Zisk %': '{:,.2f} %',
+        'Dividenda': '{:,.2f}',
+        'Div. celkem CZK': '{:,.0f}'
+    }, decimal=',', thousands=' ')
+    return styler
 
-# --- HTML VÝSTUP ---
-html = "<table class='portfolio-table'><thead><tr>"
-html += "<th>Název titulu</th><th>Ticker</th><th>KS</th><th>TC</th><th>Hodnota CZK</th>"
-html += "<th>Zisk %</th><th>Dividenda</th><th>Div. celkem CZK</th>"
-html += "</tr></thead><tbody>"
-
-for _, r in df.iterrows():
-    c_cls = "pos" if r["_diff"] >= 0 else "neg"
-    z_cls = "pos" if r["Zisk %"] >= 0 else "neg"
-    
-    html += f"<tr>"
-    html += f"<td class='stock-name'>{r['Název']}</td>"
-    html += f"<td>{r['Ticker']}</td>"
-    html += f"<td class='num highlight'>{format_cz(r['KS'], 0)}</td>"
-    html += f"<td class='num {c_cls}'>{format_cz(r['TC'])}</td>"
-    html += f"<td class='num highlight'>{format_cz(r['Hodnota CZK'], 0)}</td>"
-    html += f"<td class='num {z_cls}'>{format_cz(r['Zisk %'])} %</td>"
-    html += f"<td class='num'>{format_cz(r['Dividenda'])}</td>"
-    html += f"<td class='num'>{format_cz(r['Div. celkem CZK'], 0)}</td>"
-    html += "</tr>"
-
-html += "</tbody></table>"
-
-st.write(html, unsafe_allow_html=True)
+# Zobrazení
+st.dataframe(
+    style_df(final_df.style).hide(subset=['_diff'], axis=1), 
+    use_container_width=True, 
+    height=800, # Dostatečná výška pro 25 řádků
+    hide_index=True
+)
 
 # Sidebar metriky
 st.sidebar.divider()
-st.sidebar.metric("Celková hodnota", format_cz(df["Hodnota CZK"].sum(), 0) + " CZK")
-st.sidebar.metric("Roční dividendy", format_cz(df["Div. celkem CZK"].sum(), 0) + " CZK")
-st.sidebar.metric("Celkový zisk", format_cz(df["Hodnota CZK"].sum() - df["Inv_CZK"].sum(), 0) + " CZK")
+total_val = final_df["Hodnota CZK"].sum()
+st.sidebar.metric("Celková hodnota", f"{total_val:,.0f} CZK".replace(",", " "))
+st.sidebar.metric("Roční dividendy", f"{final_df['Div. celkem CZK'].sum():,.0f} CZK".replace(",", " "))
+st.sidebar.metric("Celkový zisk", f"{(total_val - df['Inv_CZK'].sum()):,.0f} CZK".replace(",", " "))
