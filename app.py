@@ -4,6 +4,45 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
+# --- KOMPAKTNÍ STYLOVÁNÍ (CSS) ---
+st.markdown("""
+<style>
+    /* Posun celého obsahu co nejvýše */
+    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+    
+    /* Definice tabulky - extrémně kompaktní */
+    .portfolio-table { 
+        width: 100%; 
+        border-collapse: collapse; 
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 14px; /* O něco menší písmo pro úsporu místa */
+    }
+    .portfolio-table th { 
+        background-color: #f8f9fb; 
+        padding: 4px 10px; 
+        text-align: left; 
+        border-bottom: 2px solid #333;
+        font-weight: bold;
+    }
+    .portfolio-table td { 
+        padding: 2px 10px; /* Minimální vertikální padding */
+        border-bottom: 1px solid #eee;
+        line-height: 1.2;
+    }
+    
+    /* Zarovnání čísel doprava */
+    .num { text-align: right; }
+    
+    /* Barvy a tučnost */
+    .pos { color: #28a745; font-weight: bold; }
+    .neg { color: #dc3545; font-weight: bold; }
+    .stock-name { font-weight: bold; color: #1f77b4; text-align: left; }
+    
+    /* Zúžení postranního panelu pro více místa na tabulku */
+    [data-testid="stSidebar"] { width: 250px !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # --- DATA ---
 def get_data():
     data = [
@@ -35,26 +74,11 @@ def get_data():
     ]
     return pd.DataFrame(data, columns=["Název", "Ticker", "Ks", "Sektor", "Měna", "Cena_Std", "Cena_Opce"])
 
-# --- FUNKCE PRO POMOCNÉ FORMÁTOVÁNÍ ---
 def format_cz(value, decimals=2):
     if pd.isna(value): return "-"
-    s = f"{value:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", " ")
-    return s
+    return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" ", " ")
 
-# --- STYLOVÁNÍ ---
-st.markdown("""
-<style>
-    .reportview-container .main .block-container { padding-top: 1rem; }
-    .portfolio-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; }
-    .portfolio-table th { background-color: #f0f2f6; padding: 10px; text-align: left; border-bottom: 2px solid #ddd; }
-    .portfolio-table td { padding: 8px 10px; border-bottom: 1px solid #eee; }
-    .pos { color: #28a745; font-weight: bold; }
-    .neg { color: #dc3545; font-weight: bold; }
-    .stock-name { font-weight: bold; color: #1f77b4; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- LOGIKA ---
+# --- LOGIKA DATA ---
 df = get_data()
 
 # SIDEBAR
@@ -63,7 +87,7 @@ view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
 time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"])
 col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def fetch_data(tickers):
     curr, hist = {}, {}
     for t in tickers:
@@ -73,19 +97,17 @@ def fetch_data(tickers):
             if not h.empty:
                 hist[t] = h
                 curr[t] = h["Close"].iloc[-1]
-                # Denní změna pro barvení aktuální ceny
-                prev_close = h["Close"].iloc[-2] if len(h) > 1 else h["Close"].iloc[-1]
-                curr[t + "_diff"] = curr[t] - prev_close
+                prev = h["Close"].iloc[-2] if len(h) > 1 else h["Close"].iloc[-1]
+                curr[t + "_diff"] = curr[t] - prev
             else: curr[t], curr[t + "_diff"] = 0.0, 0.0
         except: curr[t], curr[t + "_diff"] = 0.0, 0.0
     return curr, hist
 
-with st.spinner('Aktualizuji...'):
+with st.spinner('Načítám...'):
     curr_prices, hist_data = fetch_data(df["Ticker"].tolist())
     df["Aktuální_Cena"] = df["Ticker"].map(lambda x: curr_prices.get(x, 0))
     df["Diff"] = df["Ticker"].map(lambda x: curr_prices.get(x + "_diff", 0))
 
-# Výpočet zisku
 def calc_change(row):
     t = row["Ticker"]
     if t not in hist_data: return 0.0
@@ -106,29 +128,28 @@ df["Inv_CZK"] = df.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1
 
 # Sidebar metriky
 st.sidebar.divider()
-st.sidebar.metric("Celková hodnota", format_cz(df["Hodnota_CZK"].sum(), 0) + " CZK")
-prof = df["Hodnota_CZK"].sum() - df["Inv_CZK"].sum()
+total_val = df["Hodnota_CZK"].sum()
+st.sidebar.metric("Celková hodnota", format_cz(total_val, 0) + " CZK")
+prof = total_val - df["Inv_CZK"].sum()
 prof_p = (prof / df["Inv_CZK"].sum() * 100) if df["Inv_CZK"].sum() != 0 else 0
 st.sidebar.metric("Celkový zisk", format_cz(prof, 0) + " CZK", f"{prof_p:.2f} %")
 
-# --- TVORBA HTML TABULKY ---
+# --- VÝSTUPNÍ HTML TABULKA ---
 html = "<table class='portfolio-table'><thead><tr>"
-html += "<th>Název</th><th>Ticker</th><th>Kusy</th><th>Cena</th><th>Zisk %</th><th>Hodnota CZK</th>"
+html += "<th>Název</th><th class='num'>Ticker</th><th class='num'>Kusy</th><th class='num'>Cena</th><th class='num'>Zisk %</th><th class='num'>Hodnota CZK</th>"
 html += "</tr></thead><tbody>"
 
 for _, r in df.iterrows():
-    # Třída pro barvu ceny (zelená/červená podle denního vývoje)
     c_class = "pos" if r["Diff"] >= 0 else "neg"
-    # Třída pro barvu zisku
     z_class = "pos" if r["Zisk_%"] >= 0 else "neg"
     
     html += f"<tr>"
     html += f"<td class='stock-name'>{r['Název']}</td>"
-    html += f"<td>{r['Ticker']}</td>"
-    html += f"<td>{format_cz(r['Ks'], 0)}</td>"
-    html += f"<td class='{c_class}'>{format_cz(r['Aktuální_Cena'])}</td>"
-    html += f"<td class='{z_class}'>{format_cz(r['Zisk_%'])} %</td>"
-    html += f"<td>{format_cz(r['Hodnota_CZK'], 0)}</td>"
+    html += f"<td class='num'>{r['Ticker']}</td>"
+    html += f"<td class='num'>{format_cz(r['Ks'], 0)}</td>"
+    html += f"<td class='num {c_class}'>{format_cz(r['Aktuální_Cena'])}</td>"
+    html += f"<td class='num {z_class}'>{format_cz(r['Zisk_%'])} %</td>"
+    html += f"<td class='num'>{format_cz(r['Hodnota_CZK'], 0)}</td>"
     html += f"</tr>"
 
 html += "</tbody></table>"
