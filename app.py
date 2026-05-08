@@ -4,12 +4,46 @@ import pandas as pd
 
 st.set_page_config(page_title="Portfolio", layout="wide")
 
-# --- STYLOVÁNÍ CELÉ STRÁNKY ---
+# --- KOMPAKTNÍ STYLOVÁNÍ ---
 st.markdown("""
 <style>
-    .block-container { padding-top: 2rem !important; }
-    /* Úprava vzhledu tabulky pro lepší čitelnost */
-    [data-testid="stDataFrame"] { border: 1px solid #dee2e6; }
+    .block-container { padding-top: 1.5rem !important; padding-bottom: 0rem !important; }
+    
+    .portfolio-table { 
+        width: 100%; 
+        border-collapse: collapse; 
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 13px; /* Mírně menší písmo pro úsporu místa */
+    }
+    
+    .portfolio-table th { 
+        background-color: #212529; /* Velmi tmavě šedá/černá */
+        color: #ffffff;
+        padding: 8px 10px; 
+        text-align: right; 
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid #343a40;
+        position: sticky;
+        top: 0;
+    }
+    
+    .portfolio-table th:hover { background-color: #343a40; }
+    .portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left !important; }
+    
+    .portfolio-table td { 
+        padding: 3px 10px; /* Kompaktní řádky */
+        border-bottom: 1px solid #dee2e6;
+        line-height: 1.2;
+    }
+    
+    .num { text-align: right !important; }
+    .pos { color: #28a745; font-weight: bold; }
+    .neg { color: #dc3545; font-weight: bold; }
+    .stock-name { font-weight: bold; color: #000; }
+    .highlight { font-weight: bold; color: #000; }
+    
+    tr:hover { background-color: #f8f9fa; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,9 +76,9 @@ def get_data():
         ["STMicro", "STMPA.PA", 100, "EUR", 35, 23.4, 0.24],
         ["EHANG", "EH", 200, "USD", 16.5, 14.73, 0.0]
     ]
-    return pd.DataFrame(data, columns=["Název titulu", "Ticker", "KS", "Měna", "Cena_Std", "Cena_Opce", "Dividenda"])
+    return pd.DataFrame(data, columns=["Název", "Ticker", "KS", "Měna", "Cena_Std", "Cena_Opce", "Dividenda"])
 
-# --- LOGIKA VÝPOČTŮ ---
+# --- LOGIKA ---
 df = get_data()
 
 st.sidebar.title("PORTFOLIO")
@@ -62,8 +96,8 @@ def fetch_data(tickers):
             if not h.empty:
                 curr[t] = h["Close"].iloc[-1]
                 diffs[t] = h["Close"].iloc[-1] - h["Close"].iloc[-2] if len(h) > 1 else 0
-            else: curr[t], diffs[t] = 0.0, 0.0
-        except: curr[t], diffs[t] = 0.0, 0.0
+            else: curr[t], diffs[t] = 0, 0
+        except: curr[t], diffs[t] = 0, 0
     return curr, diffs
 
 with st.spinner('Aktualizuji...'):
@@ -77,39 +111,92 @@ df["Inv_CZK"] = df.apply(lambda x: x["KS"] * x[col_price] * fx.get(x["Měna"], 1
 df["Zisk %"] = ((df["TC"] - df[col_price]) / df[col_price] * 100)
 df["Div. celkem CZK"] = df.apply(lambda x: x["KS"] * x["Dividenda"] * fx.get(x["Měna"], 1.0), axis=1)
 
-final_df = df[["Název titulu", "Ticker", "KS", "TC", "Hodnota CZK", "Zisk %", "Dividenda", "Div. celkem CZK", "_diff"]].copy()
+def format_cz(value, decimals=2):
+    return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
 
-# --- FORMÁTOVÁNÍ (OPRAVENO: map místo applymap) ---
-def color_profit(val):
-    color = '#28a745' if val > 0 else '#dc3545' if val < 0 else 'black'
-    return f'color: {color}; font-weight: bold'
+# --- HTML TABULKA S INLINE JAVASCRIPTEM ---
+# JavaScript je vložen přímo do HTML komponenty, aby fungovalo řazení
+html_code = f"""
+<div id="portfolio-container">
+<table class="portfolio-table" id="pTable">
+    <thead>
+        <tr>
+            <th onclick="sortT(0)">Název titulu</th>
+            <th onclick="sortT(1)">Ticker</th>
+            <th onclick="sortT(2)">KS</th>
+            <th onclick="sortT(3)">TC</th>
+            <th onclick="sortT(4)">Hodnota CZK</th>
+            <th onclick="sortT(5)">Zisk %</th>
+            <th onclick="sortT(6)">Dividenda</th>
+            <th onclick="sortT(7)">Div. celkem CZK</th>
+        </tr>
+    </thead>
+    <tbody>
+"""
 
-def color_tc(row):
-    color = '#28a745' if row['_diff'] >= 0 else '#dc3545'
-    return ['' if col != 'TC' else f'color: {color}; font-weight: bold' for col in row.index]
+for _, r in df.iterrows():
+    c_cls = "pos" if r["_diff"] >= 0 else "neg"
+    z_cls = "pos" if r["Zisk %"] >= 0 else "neg"
+    
+    html_code += f"<tr>"
+    html_code += f"<td class='stock-name'>{r['Název']}</td>"
+    html_code += f"<td>{r['Ticker']}</td>"
+    html_code += f"<td class='num highlight'>{format_cz(r['KS'], 0)}</td>"
+    html_code += f"<td class='num {c_cls}'>{format_cz(r['TC'])}</td>"
+    html_code += f"<td class='num highlight'>{format_cz(r['Hodnota CZK'], 0)}</td>"
+    html_code += f"<td class='num {z_cls}'>{format_cz(r['Zisk %'])} %</td>"
+    html_code += f"<td class='num'>{format_cz(r['Dividenda'])}</td>"
+    html_code += f"<td class='num'>{format_cz(r['Div. celkem CZK'], 0)}</td>"
+    html_code += "</tr>"
 
-styler = final_df.style\
-    .map(color_profit, subset=['Zisk %'])\
-    .apply(color_tc, axis=1)\
-    .map(lambda v: 'font-weight: bold', subset=['KS', 'Hodnota CZK', 'Název titulu'])\
-    .format({
-        'KS': '{:,.0f}',
-        'TC': '{:,.2f}',
-        'Hodnota CZK': '{:,.0f}',
-        'Zisk %': '{:,.2f} %',
-        'Dividenda': '{:,.2f}',
-        'Div. celkem CZK': '{:,.0f}'
-    }, decimal=',', thousands=' ')\
-    .hide(subset=['_diff'], axis=1)
+html_code += """
+    </tbody>
+</table>
+</div>
 
-# Sidebar metriky
+<script>
+function sortT(n) {
+  var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+  table = document.getElementById("pTable");
+  switching = true;
+  dir = "asc";
+  while (switching) {
+    switching = false;
+    rows = table.rows;
+    for (i = 1; i < (rows.length - 1); i++) {
+      shouldSwitch = false;
+      x = rows[i].getElementsByTagName("TD")[n];
+      y = rows[i+1].getElementsByTagName("TD")[n];
+      let xV = x.innerText.replace(/[ %]/g, '').replace(',', '.');
+      let yV = y.innerText.replace(/[ %]/g, '').replace(',', '.');
+      let xN = parseFloat(xV);
+      let yN = parseFloat(yV);
+      if (!isNaN(xN) && !isNaN(yN)) {
+        if (dir == "asc") { if (xN > yN) { shouldSwitch = true; break; } }
+        else { if (xN < yN) { shouldSwitch = true; break; } }
+      } else {
+        if (dir == "asc") { if (x.innerText.toLowerCase() > y.innerText.toLowerCase()) { shouldSwitch = true; break; } }
+        else { if (x.innerText.toLowerCase() < y.innerText.toLowerCase()) { shouldSwitch = true; break; } }
+      }
+    }
+    if (shouldSwitch) {
+      rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+      switching = true;
+      switchcount ++;
+    } else {
+      if (switchcount == 0 && dir == "asc") { dir = "desc"; switching = true; }
+    }
+  }
+}
+</script>
+"""
+
+# Zobrazení přes components.html zajistí, že JavaScript poběží v izolovaném, ale funkčním okně
+import streamlit.components.v1 as components
+components.html(html_code, height=650, scrolling=False)
+
+# Sidebar sumář
 st.sidebar.divider()
-st.sidebar.metric("Celková hodnota", f"{final_df['Hodnota CZK'].sum():,.0f} CZK".replace(",", " "))
-st.sidebar.metric("Roční dividendy", f"{final_df['Div. celkem CZK'].sum():,.0f} CZK".replace(",", " "))
-
-st.dataframe(
-    styler, 
-    use_container_width=True, 
-    height=850, 
-    hide_index=True
-)
+st.sidebar.metric("Celková hodnota", format_cz(df["Hodnota CZK"].sum(), 0) + " CZK")
+st.sidebar.metric("Roční dividendy", format_cz(df["Div. celkem CZK"].sum(), 0) + " CZK")
+st.sidebar.metric("Celkový zisk", format_cz(df["Hodnota CZK"].sum() - df["Inv_CZK"].sum(), 0) + " CZK")
