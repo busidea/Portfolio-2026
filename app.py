@@ -143,7 +143,7 @@ try:
         st.write(html, unsafe_allow_html=True)
 
     # --- OSTATNÍ STRÁNKY (ZATÍM JEDNODUCHÉ) ---
-        elif page == "📊 Grafy & Sektory":
+    elif page == "📊 Grafy & Sektory":
         st.subheader("Vizuální mapa portfolia")
         
         # Příprava dat
