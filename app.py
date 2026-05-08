@@ -143,7 +143,33 @@ try:
         st.write(html, unsafe_allow_html=True)
 
     # --- OSTATNÍ STRÁNKY (ZATÍM JEDNODUCHÉ) ---
-    elif page == "📊 Grafy & Sektory":
+        elif page == "📊 Grafy & Sektory":
+        st.subheader("Vizuální mapa portfolia")
+        
+        # Příprava dat
+        rows_g = []
+        for _, r in df_sheet.iterrows():
+            rate = fx.get(str(r["Měna"]).strip(), 1.0)
+            rows_g.append({
+                "Název": "High Templar Tech" if r["Ticker"] in ["QD", "HTT"] else r["Název"],
+                "Sektor": r["Obor (Sektor)"],
+                "Hodnota CZK": r["Ks"] * market_info.get(r["Ticker"], {"price":0})["price"] * rate
+            })
+        df_g = pd.DataFrame(rows_g)
+
+        # TreeMap - tohle je ta pecka
+        fig_tree = px.treemap(
+            df_g, 
+            path=[px.Constant("Portfolio"), 'Sektor', 'Název'], # Hierarchie: Vše -> Sektor -> Akcie
+            values='Hodnota CZK',
+            color='Sektor',
+            color_discrete_sequence=px.colors.qualitative.Prism
+        )
+        
+        fig_tree.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+        st.plotly_chart(fig_tree, use_container_width=True)
+        
+        st.info("💡 Tip: Na čtverce v grafu můžeš klikat – graf se 'ponoří' hlouběji do daného sektoru.")
         st.subheader("Rozložení portfolia")
         # Rychlá příprava dat pro graf
         rows_g = []
