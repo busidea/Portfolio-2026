@@ -6,7 +6,6 @@ import numpy as np
 st.set_page_config(page_title="Live Portfolio", layout="wide")
 
 # --- KONFIGURACE ODKAZU ---
-# Vaše tabulka převedená na přímý export dat
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
@@ -36,100 +35,106 @@ def format_cz(value, decimals=2):
     except:
         return "0"
 
-# --- NAČÍTÁNÍ DAT Z GOOGLE SHEETS ---
-@st.cache_data(ttl=300) # Data z tabulky se osvěží každých 5 minut
-def load_sheet_data():
+# --- NAČÍTÁNÍ DAT ---
+@st.cache_data(ttl=300)
+def load_data_all():
+    # 1. Načtení Google Tabulky
     df_sheet = pd.read_csv(SHEET_URL)
-    # Vyčištění dat (odstranění prázdných řádků)
     df_sheet = df_sheet.dropna(subset=['Ticker'])
-    return df_sheet
-
-# --- NAČÍTÁNÍ DAT Z BURZY ---
-@st.cache_data(ttl=600)
-def fetch_market_data(tickers):
-    results = {}
-    hist_data = {}
+    
+    tickers = df_sheet["Ticker"].unique().tolist()
+    market_results = {}
+    historicals = {}
+    
+    # 2. Načtení dat z Yahoo Finance
     for t in tickers:
         try:
             tk = yf.Ticker(t)
-            # Aktuální cena a info
             info = tk.info
             h = tk.history(period="1y")
             
-            # Automatická dividenda (zkusíme několik zdrojů v info)
-            div = info.get('trailingAnnualDividendRate')
-            if div is None:
-                yield_pc = info.get('dividendYield')
-                if yield_pc:
-                    div = info.get('currentPrice', 0) * yield_pc
-                else:
-                    div = 0.0
+            # Automatická dividenda (trailingAnnualDividendRate)
+            div = info.get('trailingAnnualDividendRate') or (info.get('dividendYield', 0) * info.get('currentPrice', 0))
             
-            results[t] = {
-                "shortName": info.get('shortName', t),
+            market_results[t] = {
                 "price": info.get('currentPrice') or (h['Close'].iloc[-1] if not h.empty else 0),
                 "div": div or 0.0,
                 "currency": info.get('currency', 'USD'),
                 "diff": (h['Close'].iloc[-1] - h['Close'].iloc[-2]) if len(h) > 1 else 0
             }
-            hist_data[t] = h
+            historicals[t] = h
         except:
-            results[t] = {"shortName": t, "price": 0, "div": 0, "currency": "USD", "diff": 0}
-    return results, hist_data
+            market_results[t] = {"price": 0, "div": 0, "currency": "USD", "diff": 0}
+            
+    return df_sheet, market_results, historicals
 
-# --- HLAVNÍ LOGIKA ---
+# --- SPUŠTĚNÍ LOGIKY ---
 try:
-    df_base = load_sheet_data()
-    tickers = df_base["Ticker"].unique().tolist()
-    
-    with st.spinner('Stahuji data z burzy a Google tabulky...'):
-        market_info, historicals = fetch_market_data(tickers)
+    df_sheet, market_info, historicals = load_data_all()
 
-    # Propojení dat
-    df_base["Název"] = df_base["Ticker"].map(lambda x: market_info[x]["shortName"])
-    df_base["TC"] = df_base["Ticker"].map(lambda x: market_info[x]["price"])
-    df_base["Měna"] = df_base["Ticker"].map(lambda x: market_info[x]["currency"])
-    df_base["Divi_Auto"] = df_base["Ticker"].map(lambda x: market_info[x]["div"])
-    df_base["Diff"] = df_base["Ticker"].map(lambda x: market_info[x]["diff"])
-
-    # Sidebar ovladače
+    # Sidebar ovladače (vytvořeny dříve kvůli výpočtům)
     st.sidebar.title("PORTFOLIO")
     view_mode = st.sidebar.radio("Nákupní cena:", ["Standardní", "S opcemi"])
     time_frame = st.sidebar.selectbox("Změna za období:", ["Od počátku", "1 rok", "1 měsíc", "1 týden", "1 den"], index=4)
-    sort_col = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota_CZK", "Zisk_%", "Ks", "TC"], index=1)
+    sort_col_ui = st.sidebar.selectbox("Seřadit podle:", ["Název", "Hodnota CZK", "Zisk %", "Ks", "TC"], index=1)
     sort_asc = st.sidebar.checkbox("Vzestupně", value=False)
 
-    col_price = "Cena_Std" if view_mode == "Standardní" else "Cena_Opce"
+    # Mapování nákupní ceny podle tvé tabulky
+    col_price = "Průměrná nákupní cena" if view_mode == "Standardní" else "Nákupní cena včetně opcí"
 
-    # Výpočty
+    # Výpočty pro každý řádek
     fx = {"CZK": 1.0, "EUR": 25.2, "USD": 23.5, "GBP": 29.5, "DKK": 3.38}
     
-    def calc_zisk(row):
-        t = row["Ticker"]
-        if t not in historicals or historicals[t].empty: return 0.0
-        h = historicals[t]["Close"]
-        if time_frame == "1 den": ref = h.iloc[-2] if len(h)>1 else h.iloc[-1]
-        elif time_frame == "1 týden": ref = h.iloc[-5] if len(h)>5 else h.iloc[0]
-        elif time_frame == "1 měsíc": ref = h.iloc[-21] if len(h)>21 else h.iloc[0]
-        elif time_frame == "1 rok": ref = h.iloc[0]
-        else: ref = row[col_price]
-        return ((row["TC"] - ref) / ref) * 100 if ref != 0 else 0
+    rows = []
+    for _, r in df_sheet.iterrows():
+        t = r["Ticker"]
+        m = market_info.get(t, {})
+        h = historicals.get(t, pd.DataFrame())
+        
+        # Oprava názvu pro HTT
+        name = "High Templar Tech" if t == "HTT" else r["Název"]
+        
+        current_price = m.get("price", 0)
+        buy_price = r[col_price]
+        currency = r["Měna"] if pd.notna(r["Měna"]) else m.get("currency", "USD")
+        rate = fx.get(currency, 1.0)
+        
+        # Výpočet změny %
+        if time_frame == "1 den" and len(h) > 1: ref = h["Close"].iloc[-2]
+        elif time_frame == "1 týden" and len(h) > 5: ref = h["Close"].iloc[-5]
+        elif time_frame == "1 měsíc" and len(h) > 21: ref = h["Close"].iloc[-21]
+        elif time_frame == "1 rok" and len(h) > 0: ref = h["Close"].iloc[0]
+        else: ref = buy_price
+        
+        zisk_pc = ((current_price - ref) / ref * 100) if ref != 0 else 0
+        
+        rows.append({
+            "Název": name,
+            "Ticker": t,
+            "Ks": r["Ks"],
+            "TC": current_price,
+            "Hodnota CZK": r["Ks"] * current_price * rate,
+            "Zisk %": zisk_pc,
+            "Dividenda": m.get("div", 0),
+            "Div celkem CZK": r["Ks"] * m.get("div", 0) * rate,
+            "Diff": m.get("diff", 0),
+            "Inv_CZK": r["Ks"] * buy_price * rate
+        })
 
-    df_base["Zisk_%"] = df_base.apply(calc_zisk, axis=1)
-    df_base["Hodnota_CZK"] = df_base.apply(lambda x: x["Ks"] * x["TC"] * fx.get(x["Měna"], 1.0), axis=1)
-    df_base["Inv_CZK"] = df_base.apply(lambda x: x["Ks"] * x[col_price] * fx.get(x["Měna"], 1.0), axis=1)
-    df_base["Divi_Celkem_CZK"] = df_base.apply(lambda x: x["Ks"] * x["Divi_Auto"] * fx.get(x["Měna"], 1.0), axis=1)
+    df_final = pd.DataFrame(rows)
 
-    # Seřazení
-    df_final = df_base.sort_values(by=sort_col, ascending=sort_asc)
+    # Přemapování názvu sloupce pro řazení
+    sort_map = {"Název": "Název", "Hodnota CZK": "Hodnota CZK", "Zisk %": "Zisk %", "Ks": "Ks", "TC": "TC"}
+    df_final = df_final.sort_values(by=sort_map[sort_col_ui], ascending=sort_asc)
 
     # Sidebar metriky
     st.sidebar.divider()
-    st.sidebar.metric("Celková hodnota", format_cz(df_final["Hodnota_CZK"].sum(), 0) + " CZK")
-    st.sidebar.metric("Odhad dividend (rok)", format_cz(df_final["Divi_Celkem_CZK"].sum(), 0) + " CZK")
-    st.sidebar.metric("Celkový zisk", format_cz(df_final["Hodnota_CZK"].sum() - df_final["Inv_CZK"].sum(), 0) + " CZK")
+    total_val = df_final["Hodnota CZK"].sum()
+    st.sidebar.metric("Celková hodnota", format_cz(total_val, 0) + " CZK")
+    st.sidebar.metric("Odhad dividend (rok)", format_cz(df_final["Div celkem CZK"].sum(), 0) + " CZK")
+    st.sidebar.metric("Celkový zisk", format_cz(total_val - df_final["Inv_CZK"].sum(), 0) + " CZK")
 
-    # --- HTML VÝSTUP ---
+    # --- HTML TABULKA ---
     html = "<table class='portfolio-table'><thead><tr>"
     html += "<th>Název titulu</th><th>Ticker</th><th class='num'>KS</th><th class='num'>TC</th><th class='num'>Hodnota CZK</th>"
     html += "<th class='num'>Zisk %</th><th class='num'>Dividenda</th><th class='num'>Div. celkem CZK</th>"
@@ -137,22 +142,22 @@ try:
 
     for _, r in df_final.iterrows():
         c_class = "pos" if r["Diff"] >= 0 else "neg"
-        z_class = "pos" if r["Zisk_%"] >= 0 else "neg"
+        z_class = "pos" if r["Zisk %"] >= 0 else "neg"
         
         html += f"<tr>"
         html += f"<td class='stock-name'>{r['Název']}</td>"
         html += f"<td>{r['Ticker']}</td>"
         html += f"<td class='num highlight'>{format_cz(r['Ks'], 0)}</td>"
         html += f"<td class='num {c_class}'>{format_cz(r['TC'])}</td>"
-        html += f"<td class='num highlight'>{format_cz(r['Hodnota_CZK'], 0)}</td>"
-        html += f"<td class='num {z_class}'>{format_cz(r['Zisk_%'])} %</td>"
-        html += f"<td class='num'>{format_cz(r['Divi_Auto'])}</td>"
-        html += f"<td class='num'>{format_cz(r['Divi_Celkem_CZK'], 0)}</td>"
+        html += f"<td class='num highlight'>{format_cz(r['Hodnota CZK'], 0)}</td>"
+        html += f"<td class='num {z_class}'>{format_cz(r['Zisk %'])} %</td>"
+        html += f"<td class='num'>{format_cz(r['Dividenda'])}</td>"
+        html += f"<td class='num'>{format_cz(r['Div celkem CZK'], 0)}</td>"
         html += "</tr>"
 
     html += "</tbody></table>"
     st.write(html, unsafe_allow_html=True)
 
 except Exception as e:
-    st.error(f"Chyba při načítání dat: {e}")
-    st.info("Zkontrolujte, zda má tabulka sloupce: Ticker, Ks, Cena_Std, Cena_Opce")
+    st.error(f"Chyba: {e}")
+    st.info("Ujistěte se, že sloupce v Google Tabulce jsou: Název, Ticker, Ks, Průměrná nákupní cena, Nákupní cena včetně opcí")
