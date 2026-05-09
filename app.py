@@ -27,7 +27,7 @@ def load_market_data(_tickers):
     for t in all_t:
         try:
             tk = yf.Ticker(t)
-            h = tk.history(period="1y")
+            h = tk.history(period="2y") # Načteme raději 2 roky pro jistotu srovnání
             if h.empty: continue
             
             info = tk.info
@@ -35,12 +35,13 @@ def load_market_data(_tickers):
             dv = info.get('trailingAnnualDividendRate') or (info.get('dividendYield', 0) * cp) or 0
             
             earn_dt, days_to = "-", "-"
-            # Získání kalendáře pro earnings
             if tk.calendar is not None and not tk.calendar.empty:
-                e_date = tk.calendar.iloc[0,0].date()
-                if e_date >= today: # Jen budoucí nebo dnešní
-                    earn_dt = e_date.strftime('%d.%m.%Y')
-                    days_to = (e_date - today).days
+                try:
+                    e_date = tk.calendar.iloc[0,0].date()
+                    if e_date >= today:
+                        earn_dt = e_date.strftime('%d.%m.%Y')
+                        days_to = (e_date - today).days
+                except: pass
 
             data[t] = {"price": cp, "div": dv, "history": h['Close'], "earn_dt": earn_dt, "days_to": days_to}
         except:
@@ -59,7 +60,7 @@ st.markdown("""
     .num { text-align: right !important; }
     .pos { color: #28a745; font-weight: bold; }
     .neg { color: #dc3545; font-weight: bold; }
-    .warn { background-color: #ffcccc; color: #cc0000; font-weight: bold; text-align: center !important; border-radius: 4px; }
+    .warn { background-color: #ffcccc; color: #cc0000 !important; font-weight: bold; text-align: center !important; border-radius: 4px; }
     .stock-name { font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
@@ -84,7 +85,7 @@ try:
     time_frame = st.sidebar.selectbox("Srovnávací období:", ["1 rok", "1 měsíc", "1 týden", "1 den"], index=1)
     
     days_map = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}
-    days = days_map[time_frame]
+    target_days = days_map[time_frame]
 
     processed = []
     total_val, total_ref = 0, 0
@@ -96,11 +97,12 @@ try:
         
         col_price = "Průměrná nákupní cena" if view_mode == "Standard" else "Nákupní cena včetně opcí"
         
-        # Bezpečné získání referenční ceny pro procenta
-        if len(info["history"]) > days:
-            ref_u = info["history"].iloc[-days-1]
+        # BEZPEČNÉ ZÍSKÁNÍ REFERENČNÍ CENY
+        hist = info["history"]
+        if len(hist) > target_days:
+            ref_u = hist.iloc[-(target_days + 1)]
         else:
-            ref_u = r[col_price]
+            ref_u = r[col_price] if r[col_price] > 0 else (hist.iloc[0] if not hist.empty else 1)
         
         c_val_czk = r["Ks"] * info["price"] * rate
         r_val_czk = r["Ks"] * ref_u * rate
@@ -118,7 +120,6 @@ try:
         })
     df_p = pd.DataFrame(processed)
 
-    # Sidebar Metriky
     st.sidebar.metric("Hodnota portfolia", f"{format_cz(total_val, 0)} CZK")
     diff_czk = total_val - total_ref
     diff_per = (diff_czk / total_ref * 100) if total_ref > 0 else 0
@@ -131,11 +132,8 @@ try:
         html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Tržní cena</th><th class='num'>Hodnota CZK</th><th class='num'>Změna %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní do</th></tr></thead><tbody>"
         for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
             z_c = "pos" if r["Zisk %"] >= 0 else "neg"
-            
-            # Podbarvení pro blízké Earnings
-            warn_class = "class='warn'" if (isinstance(r['DaysTo'], int) and r['DaysTo'] <= 7) else ""
-            
-            html += f"<tr><td class='stock-name'>{r['Název']}</td><td class='num'>{r['Ks']:.0f}</td><td class='num'>{format_cz(r['TC'])}</td><td class='num' style='font-weight:bold;'>{format_cz(r['Hodnota CZK'], 0)}</td><td class='num {z_c}'>{r['Zisk %']:.2f} %</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['Earnings']}</td><td {warn_class}>{r['DaysTo']}</td></tr>"
+            warn_style = " class='warn'" if (isinstance(r['DaysTo'], int) and r['DaysTo'] <= 7) else ""
+            html += f"<tr><td class='stock-name'>{r['Název']}</td><td class='num'>{r['Ks']:.0f}</td><td class='num'>{format_cz(r['TC'])}</td><td class='num' style='font-weight:bold;'>{format_cz(r['Hodnota CZK'], 0)}</td><td class='num {z_c}'>{r['Zisk %']:.2f} %</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['Earnings']}</td><td{warn_style}>{r['DaysTo']}</td></tr>"
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
     elif page == "🖼️ Grafika":
@@ -163,9 +161,8 @@ try:
             target = st.selectbox("Srovnat s:", ["Celé Portfolio"] + df_p["Název"].tolist())
         
         idx_t = "^GSPC" if index_choice == "S&P 500" else "^GDAXI"
-        if idx_t in m_data:
-            idx_full = m_data[idx_t]["history"]
-            idx_h = idx_full.tail(days+1)
+        if idx_t in m_data and not m_data[idx_t]["history"].empty:
+            idx_h = m_data[idx_t]["history"].tail(target_days+1)
             idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
             
             fig = go.Figure()
@@ -175,17 +172,17 @@ try:
                 port_h = pd.Series(0.0, index=idx_h.index)
                 for _, r in df_p.iterrows():
                     if not r["History"].empty:
-                        # Klíčová oprava: zarovnání historie akcie na časovou osu indexu
                         s = r["History"].reindex(idx_h.index, method='ffill')
                         if not s.empty and s.iloc[0] > 0:
                             port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
                 fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
             else:
-                stock_raw = df_p[df_p["Název"]==target].iloc[0]["History"]
-                stock_hist = stock_raw.reindex(idx_h.index, method='ffill')
-                if not stock_hist.empty and stock_hist.iloc[0] > 0:
-                    y_data = (stock_hist / stock_hist.iloc[0] - 1) * 100
-                    fig.add_trace(go.Scatter(x=idx_h.index, y=y_data, name=target, line=dict(color='blue', width=3)))
+                stock_data = df_p[df_p["Název"]==target].iloc[0]
+                if not stock_data["History"].empty:
+                    s = stock_data["History"].reindex(idx_h.index, method='ffill')
+                    if not s.empty and s.iloc[0] > 0:
+                        y_val = (s / s.iloc[0] - 1) * 100
+                        fig.add_trace(go.Scatter(x=idx_h.index, y=y_val, name=target, line=dict(color='blue', width=3)))
             
             fig.update_layout(height=500, margin=dict(t=20), yaxis_suffix=" %")
             st.plotly_chart(fig, use_container_width=True)
@@ -193,7 +190,6 @@ try:
     elif page == "⚙️ Ostatní":
         st.subheader("Měnová expozice")
         df_m = df_p.copy()
-        # NVO do USD dle požadavku
         df_m.loc[df_m['Ticker'].isin(['GSK', 'NVO', 'NVO.US']), 'Měna'] = 'USD'
         df_m.loc[df_m['Název'].str.contains('Volkswagen', case=False), 'Měna'] = 'CZK'
         
