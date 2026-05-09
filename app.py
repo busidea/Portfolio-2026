@@ -29,15 +29,12 @@ def load_market_data(_tickers):
             h = tk.history(period="2y")
             if h.empty: continue
             
-            # Cena a Dividenda
             info = tk.info
             cp = info.get('currentPrice') or h['Close'].iloc[-1]
             dv = info.get('trailingAnnualDividendRate') or (info.get('dividendYield', 0) * cp) or 0
             
-            # EARNINGS - Robustní hledání
             earn_dt, days_to = "-", "-"
             try:
-                # Zkusíme kalendář
                 cal = tk.calendar
                 e_date = None
                 if isinstance(cal, pd.DataFrame) and not cal.empty:
@@ -100,19 +97,13 @@ try:
         info = m_data.get(t, {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"})
         rate = fx.get(m_cur, 1.0)
         
-        # Konverze čísel z tabulky
         ks = pd.to_numeric(str(r['Ks']).replace(',','.').replace(' ',''), errors='coerce') or 0
         p_std = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.').replace(' ',''), errors='coerce') or 0
         p_opt = pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.').replace(' ',''), errors='coerce') or 0
-        
         ref_buy = p_std if view_mode == "Standard" else p_opt
         
         hist = info["history"]
-        if not hist.empty and len(hist) > target_days:
-            ref_price = hist.iloc[-(target_days + 1)]
-        else:
-            ref_price = ref_buy
-        
+        ref_price = hist.iloc[-(target_days + 1)] if not hist.empty and len(hist) > target_days else ref_buy
         curr_price = info["price"] if info["price"] > 0 else ref_buy
         
         val_czk = ks * curr_price * rate
@@ -130,7 +121,6 @@ try:
         })
     df_p = pd.DataFrame(processed)
 
-    # Sidebar Metriky
     st.sidebar.divider()
     st.sidebar.metric("Portfolio", f"{format_cz(total_val, 0)} CZK")
     diff_czk = total_val - total_ref
@@ -170,9 +160,8 @@ try:
             idx_h = m_data[idx_t]["history"].tail(target_days+1)
             idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name=index_choice if 'index_choice' in locals() else "Index", line=dict(color='gray', dash='dash')))
+            fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name="Index", line=dict(color='gray', dash='dash')))
             
-            # Srovnání s Portfoliem nebo Titulem
             target = st.selectbox("Srovnat s:", ["Celé Portfolio"] + df_p["Název"].tolist())
             if target == "Celé Portfolio":
                 port_h = pd.Series(0.0, index=idx_h.index)
@@ -193,9 +182,10 @@ try:
     elif page == "⚙️ Ostatní":
         st.subheader("Měnová expozice")
         df_m = df_p.copy()
-        # OPRAVA NOVO NORDISK (NVO) -> USD
-        df_m.loc[df_m['Ticker'].str.contains('NVO', case=False), 'Měna'] = 'USD'
-        df_m.loc[df_m['Název'].str.contains('Novo', case=False), 'Měna'] = 'USD'
+        # OPRAVA EXPOZICE: NVO i GSK -> USD
+        usd_list = ['NVO', 'GSK']
+        df_m.loc[df_m['Ticker'].apply(lambda x: any(u in x.upper() for u in usd_list)), 'Měna'] = 'USD'
+        df_m.loc[df_m['Název'].apply(lambda x: any(u in x for u in ['Novo', 'Glaxo', 'GSK'])), 'Měna'] = 'USD'
         # VW do CZK
         df_m.loc[df_m['Název'].str.contains('Volkswagen', case=False), 'Měna'] = 'CZK'
         
