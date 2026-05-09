@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
-# --- 1. DEFINICE FUNKCÍ (Musí být jako první!) ---
+# --- 1. DEFINICE FUNKCÍ ---
 
 def format_cz(value, decimals=2):
     try:
@@ -16,13 +16,15 @@ def format_cz(value, decimals=2):
 
 @st.cache_data(ttl=3600)
 def get_fx_rates():
-    # Fixní kurzy pro stabilitu, lze přepnout na live přes yfinance
     return {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
 
 @st.cache_data(ttl=300)
-def load_market_data(tickers):
+def load_market_data(_tickers):  # Přidáno podtržítko pro vyřešení chyby s hashováním
     data = {}
-    all_t = list(tickers) + ["^GSPC", "^GDAXI"]
+    # Převod na klasický list pro jistotu
+    ticker_list = list(_tickers)
+    all_t = ticker_list + ["^GSPC", "^GDAXI"]
+    
     for t in all_t:
         try:
             tk = yf.Ticker(t)
@@ -37,7 +39,11 @@ def load_market_data(tickers):
             if 'earningsTimestamp' in info and info['earningsTimestamp']:
                 earn = pd.to_datetime(info['earningsTimestamp'], unit='s').strftime('%d.%m.%Y')
             elif tk.calendar is not None and hasattr(tk.calendar, 'iloc') and not tk.calendar.empty:
-                earn = tk.calendar.iloc[0,0].strftime('%d.%m.%Y')
+                # Ošetření různých verzí yfinance kalendáře
+                try:
+                    earn = tk.calendar.iloc[0,0].strftime('%d.%m.%Y')
+                except:
+                    earn = "-"
 
             data[t] = {"price": cp, "div": dv, "history": h['Close'], "earnings": earn}
         except:
@@ -70,6 +76,7 @@ try:
         df_raw[col] = pd.to_numeric(df_raw[col].astype(str).str.replace(',','.').str.replace(' ',''), errors='coerce').fillna(0)
     
     fx = get_fx_rates()
+    # Zde posíláme unikátní tickery
     m_data = load_market_data(df_raw["Ticker"].unique())
 
     # --- 4. SIDEBAR ---
@@ -91,7 +98,11 @@ try:
         rate = fx.get(m_cur, 1.0)
         
         col_price = "Průměrná nákupní cena" if view_mode == "Standard" else "Nákupní cena včetně opcí"
-        ref_u = info["history"].iloc[-days-1] if len(info["history"]) > days else r[col_price]
+        # Ochrana proti krátké historii
+        if len(info["history"]) > days:
+            ref_u = info["history"].iloc[-days-1]
+        else:
+            ref_u = r[col_price]
         
         c_val_czk = r["Ks"] * info["price"] * rate
         r_val_czk = r["Ks"] * ref_u * rate
@@ -135,11 +146,11 @@ try:
         c1, c2 = st.columns(2)
         with c1:
             fig1 = px.bar(df_p, x='Charakter', y='Hodnota CZK', color='Název', barmode='stack', text='Název', title="Dle Charakteru")
-            fig1.update_layout(showlegend=False, height=700)
+            fig1.update_layout(showlegend=False, height=750)
             st.plotly_chart(fig1, use_container_width=True)
         with c2:
             fig2 = px.bar(df_p, x='Sentiment', y='Hodnota CZK', color='Název', barmode='stack', text='Název', title="Dle Sentimentu")
-            fig2.update_layout(showlegend=False, height=700)
+            fig2.update_layout(showlegend=False, height=750)
             st.plotly_chart(fig2, use_container_width=True)
 
     elif page == "📈 Výkonnost":
@@ -150,31 +161,36 @@ try:
             target = st.selectbox("Srovnat s:", ["Celé Portfolio"] + df_p["Název"].tolist())
         
         idx_t = "^GSPC" if index_choice == "S&P 500" else "^GDAXI"
-        idx_h = m_data[idx_t]["history"].tail(days+1)
-        idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name=index_choice, line=dict(color='gray', dash='dash')))
-        
-        if target == "Celé Portfolio":
-            port_h = pd.Series(0.0, index=idx_h.index)
-            for _, r in df_p.iterrows():
-                if not r["History"].empty:
-                    s = r["History"].tail(days+1).reindex(idx_h.index, method='ffill')
-                    port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
-            fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
+        if idx_t in m_data:
+            idx_h = m_data[idx_t]["history"].tail(days+1)
+            idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name=index_choice, line=dict(color='gray', dash='dash')))
+            
+            if target == "Celé Portfolio":
+                port_h = pd.Series(0.0, index=idx_h.index)
+                for _, r in df_p.iterrows():
+                    if not r["History"].empty:
+                        s = r["History"].tail(days+1).reindex(idx_h.index, method='ffill')
+                        if not s.empty and s.iloc[0] != 0:
+                            port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
+                fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
+            else:
+                stock_hist = df_p[df_p["Název"]==target].iloc[0]["History"].tail(days+1).reindex(idx_h.index, method='ffill')
+                if not stock_hist.empty and stock_hist.iloc[0] != 0:
+                    y_data = (stock_hist / stock_hist.iloc[0] - 1) * 100
+                    fig.add_trace(go.Scatter(x=idx_h.index, y=y_data, name=target, line=dict(color='blue', width=3)))
+            
+            fig.update_layout(height=500, margin=dict(t=20))
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            hist = df_p[df_p["Název"]==target].iloc[0]["History"].tail(days+1).reindex(idx_h.index, method='ffill')
-            y_data = (hist / hist.iloc[0] - 1) * 100
-            fig.add_trace(go.Scatter(x=idx_h.index, y=y_data, name=target, line=dict(color='blue', width=3)))
-        
-        fig.update_layout(height=500, margin=dict(t=20))
-        st.plotly_chart(fig, use_container_width=True)
+            st.warning("Data pro index nejsou k dispozici.")
 
     elif page == "⚙️ Ostatní":
         st.subheader("Měnová expozice")
         df_m = df_p.copy()
-        # Korekce měn
+        # Korekce měn dle požadavku
         df_m.loc[df_m['Ticker'].isin(['GSK', 'NVO']), 'Měna'] = 'USD'
         df_m.loc[df_m['Název'].str.contains('Volkswagen', case=False), 'Měna'] = 'CZK'
         
