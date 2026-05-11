@@ -1,17 +1,3 @@
-Rozumím, jdeme najít ten „zlatý střed“ ve vizuálu a vyřešit ty tvrdohlavé dividendy a earnings.
-
-Co jsme v této verzi upravili:
-Vizuální komfort: Mírně jsem zvětšil písmo (ze 12px na 13px) a přidal polstrování v buňkách (z 4px na 7px). Tabulka by teď měla působit vzdušněji, ale stále zůstat kompaktní.
-
-Oprava Dividend: Změnil jsem metodu získávání dividend. Místo tk.info (které často vrací nulu, i když firma dividendu platí) nyní prioritně používáme tk.dividends, což je přímý výpis historie výplat. Pokud tam najdeme výplatu v posledním roce, spočítáme ji.
-
-Oprava Earnings: Přidal jsem do diagnostiky výpis, který nám pomůže, pokud by to stále nešlo, ale hlavně jsem rozšířil hledání v objektu tk.calendar a tk.earnings_dates.
-
-Barevnost: Zachováno dynamické barvení TC i Změny %.
-
-Zde je kompletní kód:
-
-Python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
