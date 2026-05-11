@@ -20,11 +20,10 @@ def get_fx_rates():
 def load_market_data(_tickers):
     data = {}
     today = datetime.now().date()
-    # Vyčištění tickerů od mezer
     all_symbols = [str(t).strip() for t in _tickers if str(t).strip()]
     all_symbols += ["^GSPC", "^GDAXI"]
     
-    # POKUS 1: Hromadné stažení historie (nejrychlejší)
+    # Hromadný download historie
     try:
         raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False)
     except:
@@ -33,35 +32,34 @@ def load_market_data(_tickers):
     for t in all_symbols:
         try:
             cp, dv, hist = 0, 0, pd.Series()
+            earn_dt, days_to = "-", "-"
             
-            # Vytažení dat z hromadného downloadu
+            # 1. Získání ceny a historie
             if not raw_hist.empty:
                 try:
-                    if len(all_symbols) > 1:
-                        h_df = raw_hist[t].dropna(subset=['Close'])
-                    else:
-                        h_df = raw_hist.dropna(subset=['Close'])
-                    
+                    h_df = raw_hist[t].dropna(subset=['Close']) if len(all_symbols) > 1 else raw_hist.dropna(subset=['Close'])
                     if not h_df.empty:
                         cp = h_df['Close'].iloc[-1]
                         hist = h_df['Close']
                 except: pass
 
-            # POKUS 2: Záchrana přes fast_info (pokud hromadné selhalo)
             if cp == 0:
-                tk = yf.Ticker(t)
-                try:
-                    cp = tk.fast_info.get('last_price', 0)
-                except: pass
+                tk_obj = yf.Ticker(t)
+                cp = tk_obj.fast_info.get('last_price', 0)
 
-            # Dividendy a kalendář
-            earn_dt, days_to = "-", "-"
+            # 2. Získání Dividend a Earnings (vyžaduje Ticker objekt)
             if not t.startswith("^"):
                 tk = yf.Ticker(t)
+                # Zkusíme vytáhnout dividendu (trailingAnnualDividendRate je nejjistější)
                 try:
-                    dv = tk.info.get('trailingAnnualDividendRate', 0) or 0
+                    inf = tk.info
+                    dv = inf.get('trailingAnnualDividendRate') or inf.get('dividendRate') or 0
+                except: dv = 0
+                
+                # Earnings
+                try:
                     cal = tk.calendar
-                    if cal is not None:
+                    if cal is not None and not (isinstance(cal, list) and len(cal) == 0):
                         e_date = None
                         if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
                         elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
@@ -78,19 +76,22 @@ def load_market_data(_tickers):
             data[t] = {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"}
     return data
 
-# --- 2. STYLY ---
+# --- 2. STYLY (Vylepšená vizualizace) ---
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] { display: none; }
     .main .block-container { padding-top: 0.5rem !important; }
     .portfolio-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; font-size: 13px; }
-    .portfolio-table th { background-color: #000; color: white; padding: 8px; text-align: right; position: sticky; top: 0; z-index: 10; }
-    .portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left !important; }
-    .portfolio-table td { padding: 6px 8px; border-bottom: 1px solid #dee2e6; line-height: 1.2; }
-    .num { text-align: right !important; }
-    .pos { color: #28a745; font-weight: bold; }
-    .neg { color: #dc3545; font-weight: bold; }
-    .warn { background-color: #ffcccc; color: #cc0000 !important; font-weight: bold; text-align: center !important; }
+    .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 10px; text-align: right; position: sticky; top: 0; }
+    .portfolio-table th:first-child { text-align: left; }
+    .portfolio-table td { padding: 8px; border-bottom: 1px solid #eee; }
+    .ticker-name { color: #1565C0; font-weight: 800; font-size: 14px; } /* Vylepšený název */
+    .num { text-align: right; font-family: 'Roboto Mono', monospace; }
+    .pos-row { background-color: #f8fff9; } /* Velmi jemný zelený nádech pro ziskové */
+    .neg-row { background-color: #fffaf9; } /* Velmi jemný červený nádech pro ztrátové */
+    .pos-text { color: #2e7d32; font-weight: bold; }
+    .neg-text { color: #d32f2f; font-weight: bold; }
+    .warn-cell { background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center; border-radius: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,18 +123,14 @@ try:
         rate = fx.get(m_cur, 1.0)
         
         ks = pd.to_numeric(str(r['Ks']).replace(',','.').replace(' ',''), errors='coerce') or 0
-        p_std = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.').replace(' ',''), errors='coerce') or 0
-        p_opt = pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.').replace(' ',''), errors='coerce') or 0
-        ref_buy = p_std if view_mode == "Standard" else p_opt
+        ref_buy = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.').replace(' ',''), errors='coerce') if view_mode == "Standard" else pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.').replace(' ',''), errors='coerce')
         
         hist = info["history"]
         ref_price = ref_buy
         if not hist.empty:
-            if len(hist) > target_days: ref_price = hist.iloc[-(target_days + 1)]
-            else: ref_price = hist.iloc[0]
+            ref_price = hist.iloc[-(target_days + 1)] if len(hist) > target_days else hist.iloc[0]
         
         curr_price = info["price"] if info["price"] > 0 else ref_buy
-        
         val_czk = ks * curr_price * rate
         total_val += val_czk
         total_ref += (ks * ref_price * rate)
@@ -144,8 +141,7 @@ try:
             "Zisk %": ((curr_price - ref_price) / ref_price * 100) if ref_price > 0 else 0,
             "Charakter": r["Charakter"], "Sentiment": r["Sentiment"],
             "Div_ks": info["div"], "Div_total": ks * info["div"] * rate,
-            "Earnings": info["earn_dt"], "DaysTo": info["days_to"], 
-            "History": hist, "Rate": rate
+            "Earnings": info["earn_dt"], "DaysTo": info["days_to"], "History": hist
         })
     df_p = pd.DataFrame(processed)
 
@@ -154,18 +150,30 @@ try:
     diff_czk = total_val - total_ref
     st.sidebar.metric(f"Změna ({time_frame})", f"{format_cz(diff_czk, 0)} CZK", f"{(diff_czk/total_ref*100 if total_ref>0 else 0):.2f} %")
 
-    # --- STRÁNKY (ZDE JE VAŠE GRAFIKA) ---
+    # --- STRÁNKY ---
     if page == "💰 Přehled":
         html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Cena</th><th class='num'>Hodnota CZK</th><th class='num'>Změna %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní do</th></tr></thead><tbody>"
+        
         for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
-            z_c = "pos" if r["Zisk %"] >= 0 else "neg"
-            warn = " class='warn'" if (isinstance(r['DaysTo'], int) and r['DaysTo'] <= 7) else ""
-            html += f"<tr><td><b>{r['Název']}</b></td><td class='num'>{r['Ks']:.0f}</td><td class='num'>{format_cz(r['TC'])}</td><td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td><td class='num {z_c}'>{r['Zisk %']:.2f} %</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['Earnings']}</td><td{warn}>{r['DaysTo']}</td></tr>"
+            row_class = "pos-row" if r["Zisk %"] >= 0 else "neg-row"
+            text_class = "pos-text" if r["Zisk %"] >= 0 else "neg-text"
+            warn_class = " class='warn-cell'" if (isinstance(r['DaysTo'], int) and r['DaysTo'] <= 7) else ""
+            
+            html += f"""<tr class='{row_class}'>
+                <td><span class='ticker-name'>{r['Název']}</span><br><small style='color:gray'>{r['Ticker']}</small></td>
+                <td class='num'>{r['Ks']:.0f}</td>
+                <td class='num'>{format_cz(r['TC'])}</td>
+                <td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td>
+                <td class='num {text_class}'>{r['Zisk %']:.2f} %</td>
+                <td class='num'>{format_cz(r['Div_ks'])}</td>
+                <td class='num'>{format_cz(r['Div_total'], 0)}</td>
+                <td style='text-align:center'>{r['Earnings']}</td>
+                <td{warn_class}>{r['DaysTo']}</td>
+            </tr>"""
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
     elif page == "🖼️ Grafika":
         fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Sektor', 'Název'], values='Hodnota CZK', color='Sektor')
-        fig.update_traces(textinfo="label+percent entry", textfont_size=14)
         fig.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=800)
         st.plotly_chart(fig, use_container_width=True)
 
