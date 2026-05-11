@@ -1,8 +1,3 @@
-Omlouvám se, to je klasický projev chyby v syntaxi Pythonu nebo logice Streamlitu, kterou jsem způsobil tím, že jsem v minulé zprávě pro stručnost vynechal část výpočtového cyklu. Streamlit v takovém případě někdy nevyhodí chybu, ale prostě nenahraje zbytek stránky.
-
-Tady je kompletní, opravený a funkční kód. Upravil jsem v něm to řádkování (padding) na hodnotu 7px, což je ten "zlatý střed", a vrátil zpět celou logiku výpočtů, aby nezůstala bílá obrazovka.
-
-Python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
