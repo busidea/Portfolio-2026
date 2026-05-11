@@ -8,7 +8,6 @@ from datetime import datetime
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
 # --- 1. DEFINICE FUNKCÍ ---
-
 def format_cz(value, decimals=2):
     try: return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
     except: return "0"
@@ -21,17 +20,35 @@ def get_fx_rates():
 def load_market_data(_tickers):
     data = {}
     today = datetime.now().date()
-    all_t = list(_tickers) + ["^GSPC", "^GDAXI"]
+    ticker_list = list(_tickers)
+    # Přidáme indexy do seznamu pro hromadný download
+    all_symbols = ticker_list + ["^GSPC", "^GDAXI"]
     
-    for t in all_t:
+    # Hromadný download historie pro všechny symboly najednou
+    raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False)
+    
+    for t in all_symbols:
         try:
-            tk = yf.Ticker(t)
-            h = tk.history(period="2y")
-            if h.empty: continue
+            # Získání historie pro konkrétní ticker
+            if len(all_symbols) > 1:
+                h_df = raw_hist[t].dropna(subset=['Close'])
+            else:
+                h_df = raw_hist.dropna(subset=['Close'])
+                
+            if h_df.empty:
+                data[t] = {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"}
+                continue
             
-            info = tk.info
-            cp = info.get('currentPrice') or h['Close'].iloc[-1]
-            dv = info.get('trailingAnnualDividendRate') or (info.get('dividendYield', 0) * cp) or 0
+            # Cena a dividendy (zde musíme u jednotlivých tickerů vyvolat Ticker objekt pro doplňky)
+            tk = yf.Ticker(t)
+            cp = h_df['Close'].iloc[-1]
+            
+            # Dividendy a kalendář (info je nespolehlivé, zkusíme bezpečně)
+            dv = 0
+            try:
+                # Zkusíme vytáhnout dividendu z tk.info, pokud selže, dáme 0
+                dv = tk.info.get('trailingAnnualDividendRate', 0) or 0
+            except: pass
             
             earn_dt, days_to = "-", "-"
             try:
@@ -49,7 +66,7 @@ def load_market_data(_tickers):
                         days_to = (e_date - today).days
             except: pass
 
-            data[t] = {"price": cp, "div": dv, "history": h['Close'], "earn_dt": earn_dt, "days_to": days_to}
+            data[t] = {"price": cp, "div": dv, "history": h_df['Close'], "earn_dt": earn_dt, "days_to": days_to}
         except:
             data[t] = {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"}
     return data
@@ -103,7 +120,15 @@ try:
         ref_buy = p_std if view_mode == "Standard" else p_opt
         
         hist = info["history"]
-        ref_price = hist.iloc[-(target_days + 1)] if not hist.empty and len(hist) > target_days else ref_buy
+        
+        # BEZPEČNÝ INDEXER
+        ref_price = ref_buy
+        if not hist.empty:
+            if len(hist) > target_days:
+                ref_price = hist.iloc[-(target_days + 1)]
+            else:
+                ref_price = hist.iloc[0]
+        
         curr_price = info["price"] if info["price"] > 0 else ref_buy
         
         val_czk = ks * curr_price * rate
@@ -121,6 +146,7 @@ try:
         })
     df_p = pd.DataFrame(processed)
 
+    # Sidebar Metriky
     st.sidebar.divider()
     st.sidebar.metric("Portfolio", f"{format_cz(total_val, 0)} CZK")
     diff_czk = total_val - total_ref
@@ -155,8 +181,10 @@ try:
 
     elif page == "📈 Výkonnost":
         st.subheader("Benchmark: Srovnání vývoje (%)")
-        idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
-        if idx_t in m_data:
+        idx_choice = st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True)
+        idx_t = "^GSPC" if idx_choice == "S&P 500" else "^GDAXI"
+        
+        if idx_t in m_data and not m_data[idx_t]["history"].empty:
             idx_h = m_data[idx_t]["history"].tail(target_days+1)
             idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
             fig = go.Figure()
@@ -172,21 +200,22 @@ try:
                             port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
                 fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
             else:
-                s_raw = df_p[df_p["Název"]==target].iloc[0]["History"]
-                if not s_raw.empty:
-                    s = s_raw.reindex(idx_h.index, method='ffill')
-                    y_val = (s / s.iloc[0] - 1) * 100
-                    fig.add_trace(go.Scatter(x=idx_h.index, y=y_val, name=target, line=dict(color='blue', width=3)))
+                target_row = df_p[df_p["Název"]==target]
+                if not target_row.empty:
+                    s_raw = target_row.iloc[0]["History"]
+                    if not s_raw.empty:
+                        s = s_raw.reindex(idx_h.index, method='ffill')
+                        if not s.empty and s.iloc[0] > 0:
+                            y_val = (s / s.iloc[0] - 1) * 100
+                            fig.add_trace(go.Scatter(x=idx_h.index, y=y_val, name=target, line=dict(color='blue', width=3)))
             st.plotly_chart(fig, use_container_width=True)
 
     elif page == "⚙️ Ostatní":
         st.subheader("Měnová expozice")
         df_m = df_p.copy()
-        # OPRAVA EXPOZICE: NVO i GSK -> USD
         usd_list = ['NVO', 'GSK']
         df_m.loc[df_m['Ticker'].apply(lambda x: any(u in x.upper() for u in usd_list)), 'Měna'] = 'USD'
         df_m.loc[df_m['Název'].apply(lambda x: any(u in x for u in ['Novo', 'Glaxo', 'GSK'])), 'Měna'] = 'USD'
-        # VW do CZK
         df_m.loc[df_m['Název'].str.contains('Volkswagen', case=False), 'Měna'] = 'CZK'
         
         fig = px.sunburst(df_m, path=['Měna', 'Název'], values='Hodnota CZK', color='Měna',
@@ -195,4 +224,4 @@ try:
         st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Chyba: {e}")
+    st.error(f"Kritická chyba: {e}")
