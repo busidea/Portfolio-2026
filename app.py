@@ -20,53 +20,60 @@ def get_fx_rates():
 def load_market_data(_tickers):
     data = {}
     today = datetime.now().date()
-    ticker_list = list(_tickers)
-    # Přidáme indexy do seznamu pro hromadný download
-    all_symbols = ticker_list + ["^GSPC", "^GDAXI"]
+    # Vyčištění tickerů od mezer
+    all_symbols = [str(t).strip() for t in _tickers if str(t).strip()]
+    all_symbols += ["^GSPC", "^GDAXI"]
     
-    # Hromadný download historie pro všechny symboly najednou
-    raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False)
-    
+    # POKUS 1: Hromadné stažení historie (nejrychlejší)
+    try:
+        raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False)
+    except:
+        raw_hist = pd.DataFrame()
+
     for t in all_symbols:
         try:
-            # Získání historie pro konkrétní ticker
-            if len(all_symbols) > 1:
-                h_df = raw_hist[t].dropna(subset=['Close'])
-            else:
-                h_df = raw_hist.dropna(subset=['Close'])
-                
-            if h_df.empty:
-                data[t] = {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"}
-                continue
+            cp, dv, hist = 0, 0, pd.Series()
             
-            # Cena a dividendy (zde musíme u jednotlivých tickerů vyvolat Ticker objekt pro doplňky)
-            tk = yf.Ticker(t)
-            cp = h_df['Close'].iloc[-1]
-            
-            # Dividendy a kalendář (info je nespolehlivé, zkusíme bezpečně)
-            dv = 0
-            try:
-                # Zkusíme vytáhnout dividendu z tk.info, pokud selže, dáme 0
-                dv = tk.info.get('trailingAnnualDividendRate', 0) or 0
-            except: pass
-            
-            earn_dt, days_to = "-", "-"
-            try:
-                cal = tk.calendar
-                e_date = None
-                if isinstance(cal, pd.DataFrame) and not cal.empty:
-                    e_date = cal.iloc[0, 0]
-                elif isinstance(cal, dict):
-                    e_date = cal.get('Earnings Date', [None])[0]
-                
-                if e_date:
-                    if hasattr(e_date, 'date'): e_date = e_date.date()
-                    if e_date >= today:
-                        earn_dt = e_date.strftime('%d.%m.%Y')
-                        days_to = (e_date - today).days
-            except: pass
+            # Vytažení dat z hromadného downloadu
+            if not raw_hist.empty:
+                try:
+                    if len(all_symbols) > 1:
+                        h_df = raw_hist[t].dropna(subset=['Close'])
+                    else:
+                        h_df = raw_hist.dropna(subset=['Close'])
+                    
+                    if not h_df.empty:
+                        cp = h_df['Close'].iloc[-1]
+                        hist = h_df['Close']
+                except: pass
 
-            data[t] = {"price": cp, "div": dv, "history": h_df['Close'], "earn_dt": earn_dt, "days_to": days_to}
+            # POKUS 2: Záchrana přes fast_info (pokud hromadné selhalo)
+            if cp == 0:
+                tk = yf.Ticker(t)
+                try:
+                    cp = tk.fast_info.get('last_price', 0)
+                except: pass
+
+            # Dividendy a kalendář
+            earn_dt, days_to = "-", "-"
+            if not t.startswith("^"):
+                tk = yf.Ticker(t)
+                try:
+                    dv = tk.info.get('trailingAnnualDividendRate', 0) or 0
+                    cal = tk.calendar
+                    if cal is not None:
+                        e_date = None
+                        if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
+                        elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
+                        
+                        if e_date and hasattr(e_date, 'date'):
+                            e_date = e_date.date()
+                            if e_date >= today:
+                                earn_dt = e_date.strftime('%d.%m.%Y')
+                                days_to = (e_date - today).days
+                except: pass
+
+            data[t] = {"price": cp, "div": dv, "history": hist, "earn_dt": earn_dt, "days_to": days_to}
         except:
             data[t] = {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"}
     return data
@@ -120,14 +127,10 @@ try:
         ref_buy = p_std if view_mode == "Standard" else p_opt
         
         hist = info["history"]
-        
-        # BEZPEČNÝ INDEXER
         ref_price = ref_buy
         if not hist.empty:
-            if len(hist) > target_days:
-                ref_price = hist.iloc[-(target_days + 1)]
-            else:
-                ref_price = hist.iloc[0]
+            if len(hist) > target_days: ref_price = hist.iloc[-(target_days + 1)]
+            else: ref_price = hist.iloc[0]
         
         curr_price = info["price"] if info["price"] > 0 else ref_buy
         
@@ -146,14 +149,12 @@ try:
         })
     df_p = pd.DataFrame(processed)
 
-    # Sidebar Metriky
     st.sidebar.divider()
     st.sidebar.metric("Portfolio", f"{format_cz(total_val, 0)} CZK")
     diff_czk = total_val - total_ref
-    diff_per = (diff_czk / total_ref * 100) if total_ref > 0 else 0
-    st.sidebar.metric(f"Změna ({time_frame})", f"{format_cz(diff_czk, 0)} CZK", f"{diff_per:.2f} %")
+    st.sidebar.metric(f"Změna ({time_frame})", f"{format_cz(diff_czk, 0)} CZK", f"{(diff_czk/total_ref*100 if total_ref>0 else 0):.2f} %")
 
-    # --- STRÁNKY ---
+    # --- STRÁNKY (ZDE JE VAŠE GRAFIKA) ---
     if page == "💰 Přehled":
         html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Cena</th><th class='num'>Hodnota CZK</th><th class='num'>Změna %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní do</th></tr></thead><tbody>"
         for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
@@ -170,58 +171,31 @@ try:
 
     elif page == "🧠 Strategie":
         c1, c2 = st.columns(2)
-        with c1:
-            f1 = px.bar(df_p, x='Charakter', y='Hodnota CZK', color='Název', barmode='stack', text='Název', title="Dle Charakteru")
-            f1.update_layout(showlegend=False, height=750)
-            st.plotly_chart(f1, use_container_width=True)
-        with c2:
-            f2 = px.bar(df_p, x='Sentiment', y='Hodnota CZK', color='Název', barmode='stack', text='Název', title="Dle Sentimentu")
-            f2.update_layout(showlegend=False, height=750)
-            st.plotly_chart(f2, use_container_width=True)
+        with c1: st.plotly_chart(px.bar(df_p, x='Charakter', y='Hodnota CZK', color='Název', title="Dle Charakteru").update_layout(showlegend=False, height=750), use_container_width=True)
+        with c2: st.plotly_chart(px.bar(df_p, x='Sentiment', y='Hodnota CZK', color='Název', title="Dle Sentimentu").update_layout(showlegend=False, height=750), use_container_width=True)
 
     elif page == "📈 Výkonnost":
-        st.subheader("Benchmark: Srovnání vývoje (%)")
-        idx_choice = st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True)
-        idx_t = "^GSPC" if idx_choice == "S&P 500" else "^GDAXI"
-        
+        st.subheader("Benchmark")
+        idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
         if idx_t in m_data and not m_data[idx_t]["history"].empty:
             idx_h = m_data[idx_t]["history"].tail(target_days+1)
             idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name="Index", line=dict(color='gray', dash='dash')))
-            
-            target = st.selectbox("Srovnat s:", ["Celé Portfolio"] + df_p["Název"].tolist())
-            if target == "Celé Portfolio":
-                port_h = pd.Series(0.0, index=idx_h.index)
-                for _, r in df_p.iterrows():
-                    if not r["History"].empty:
-                        s = r["History"].reindex(idx_h.index, method='ffill')
-                        if not s.empty and s.iloc[0] > 0:
-                            port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
-                fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
-            else:
-                target_row = df_p[df_p["Název"]==target]
-                if not target_row.empty:
-                    s_raw = target_row.iloc[0]["History"]
-                    if not s_raw.empty:
-                        s = s_raw.reindex(idx_h.index, method='ffill')
-                        if not s.empty and s.iloc[0] > 0:
-                            y_val = (s / s.iloc[0] - 1) * 100
-                            fig.add_trace(go.Scatter(x=idx_h.index, y=y_val, name=target, line=dict(color='blue', width=3)))
+            port_h = pd.Series(0.0, index=idx_h.index)
+            for _, r in df_p.iterrows():
+                if not r["History"].empty:
+                    s = r["History"].reindex(idx_h.index, method='ffill')
+                    if not s.empty and s.iloc[0] > 0:
+                        port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
+            fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
             st.plotly_chart(fig, use_container_width=True)
 
     elif page == "⚙️ Ostatní":
-        st.subheader("Měnová expozice")
         df_m = df_p.copy()
-        usd_list = ['NVO', 'GSK']
-        df_m.loc[df_m['Ticker'].apply(lambda x: any(u in x.upper() for u in usd_list)), 'Měna'] = 'USD'
-        df_m.loc[df_m['Název'].apply(lambda x: any(u in x for u in ['Novo', 'Glaxo', 'GSK'])), 'Měna'] = 'USD'
-        df_m.loc[df_m['Název'].str.contains('Volkswagen', case=False), 'Měna'] = 'CZK'
-        
-        fig = px.sunburst(df_m, path=['Měna', 'Název'], values='Hodnota CZK', color='Měna',
-                          color_discrete_map={'CZK': '#ADD8E6', 'EUR': '#00008B', 'USD': '#FF0000'})
-        fig.update_layout(height=700)
-        st.plotly_chart(fig, use_container_width=True)
+        for t_fix in ['NVO', 'GSK']:
+            df_m.loc[df_m['Ticker'].str.contains(t_fix, case=False, na=False), 'Měna'] = 'USD'
+        st.plotly_chart(px.sunburst(df_m, path=['Měna', 'Název'], values='Hodnota CZK', color='Měna', color_discrete_map={'CZK':'#ADD8E6','EUR':'#00008B','USD':'#FF0000'}).update_layout(height=700), use_container_width=True)
 
 except Exception as e:
     st.error(f"Kritická chyba: {e}")
