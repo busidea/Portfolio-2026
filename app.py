@@ -1,14 +1,3 @@
-To je nepříjemné, ale přesně to potvrzuje, že Yahoo Finance má dnes buď technický výpadek, nebo (což je častější) blokuje hromadné požadavky z IP adres Streamlitu. Pokud nejdou data pro index (^GSPC nebo ^GDAXI), který je v Yahoo nejstabilnější, je problém na straně zdroje dat.
-
-Abychom aplikaci „odšpuntovali“, udělal jsem v kódu následující vylepšení pro krizové stavy:
-
-Hardcoded záloha pro Index: Pokud Yahoo nevrátí data pro benchmark, aplikace si nevymyslí nulu (což hází chyby v grafech), ale simuluje vodorovnou linku. Benchmark sice nebude přesný, ale zbytek aplikace a vaše tabulka budou fungovat.
-
-Odstranění indexeru: Přepsal jsem logiku benchmarku tak, aby nepoužívala .iloc (který házel tu chybu out-of-bounds), ale bezpečnější metodu .get(), která při chybě prostě vrátí prázdno.
-
-Manuální Refresh tlačítko: Přidal jsem do sidebar tlačítko na smazání cache. Někdy se stane, že se do paměti uloží "chybová odpověď" a Yahoo vás pak nepustí dál, dokud cache nevyčistíte.
-
-Python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
