@@ -24,6 +24,7 @@ def load_market_data(_tickers):
     all_symbols += ["^GSPC", "^GDAXI"]
     
     try:
+        # actions=True stahuje dividendy přímo v historickém balíku
         raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False, actions=True)
     except:
         raw_hist = pd.DataFrame()
@@ -44,14 +45,15 @@ def load_market_data(_tickers):
                             dv = last_year['Dividends'].sum()
                 except: pass
 
+            # EARNINGS LOGIKA
             if not t.startswith("^"):
                 tk = yf.Ticker(t)
-                if cp == 0: cp = tk.fast_info.get('last_price', 0)
                 try:
                     cal = tk.calendar
                     e_date = None
                     if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
                     elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
+                    
                     if e_date and hasattr(e_date, 'date'):
                         e_date = e_date.date()
                         earn_dt = e_date.strftime('%d.%m.%Y')
@@ -63,7 +65,7 @@ def load_market_data(_tickers):
             data[t] = {"price": 0, "div": 0, "history": pd.Series(), "earn_dt": "-", "days_to": "-"}
     return data
 
-# --- 2. STYLY (Mírně zmenšené řádkování) ---
+# --- 2. STYLY ---
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] { display: none; }
@@ -80,7 +82,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. NAČTENÍ A ZPRACOVÁNÍ DAT ---
+# --- 3. NAČTENÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
@@ -132,11 +134,6 @@ try:
         })
     df_p = pd.DataFrame(processed)
 
-    st.sidebar.divider()
-    st.sidebar.metric("Portfolio", f"{format_cz(total_val, 0)} CZK")
-    diff_czk = total_val - total_ref
-    st.sidebar.metric(f"Změna ({time_frame})", f"{format_cz(diff_czk, 0)} CZK", f"{(diff_czk/total_ref*100 if total_ref>0 else 0):.2f} %")
-
     # --- STRÁNKY ---
     if page == "💰 Přehled":
         html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Tržní cena</th><th class='num'>Hodnota CZK</th><th class='num'>Změna %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
@@ -158,37 +155,62 @@ try:
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
     elif page == "🖼️ Grafika":
-        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Sektor', 'Název'], values='Hodnota CZK', color='Sektor')
-        fig.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=800)
+        # Treemap s procenty a lepším formátováním
+        fig = px.treemap(df_p, 
+                         path=[px.Constant("Portfolio"), 'Sektor', 'Název'], 
+                         values='Hodnota CZK',
+                         color='Sektor',
+                         custom_data=['Hodnota CZK', 'Sektor'])
+        
+        # Úprava textu uvnitř polí: Název + Hodnota + Procento
+        fig.update_traces(
+            texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentParent:.1%}",
+            hovertemplate="<b>%{label}</b><br>Hodnota: %{value:,.0f} CZK<br>Sektor: %{customdata[1]}"
+        )
+        fig.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=800, font=dict(size=14))
         st.plotly_chart(fig, use_container_width=True)
 
-    elif page == "🧠 Strategie":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.bar(df_p, x='Charakter', y='Hodnota CZK', color='Název', title="Dle Charakteru").update_layout(showlegend=False, height=750), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(df_p, x='Sentiment', y='Hodnota CZK', color='Název', title="Dle Sentimentu").update_layout(showlegend=False, height=750), use_container_width=True)
-
     elif page == "📈 Výkonnost":
-        st.subheader("Benchmark")
+        st.subheader("Srovnání výkonnosti")
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
+        
+        # Novinka: Výběr jednotlivých titulů pro srovnání
+        selected_titles = st.multiselect("Přidat tituly k porovnání:", options=df_p["Název"].tolist())
+        
         if idx_t in m_data and not m_data[idx_t]["history"].empty:
             idx_h = m_data[idx_t]["history"].tail(target_days+1)
             idx_norm = (idx_h / idx_h.iloc[0] - 1) * 100
+            
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name="Index", line=dict(color='gray', dash='dash')))
+            # 1. Čára Indexu
+            fig.add_trace(go.Scatter(x=idx_norm.index, y=idx_norm, name=f"Index ({idx_t})", line=dict(color='gray', dash='dash')))
+            
+            # 2. Čára celého Portfolia
             port_h = pd.Series(0.0, index=idx_h.index)
             for _, r in df_p.iterrows():
                 if not r["History"].empty:
                     s = r["History"].reindex(idx_h.index, method='ffill')
                     if not s.empty and s.iloc[0] > 0:
                         port_h += (s / s.iloc[0] - 1) * 100 * (r["Hodnota CZK"] / total_val)
-            fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="Portfolio", line=dict(color='green', width=3)))
+            fig.add_trace(go.Scatter(x=idx_h.index, y=port_h, name="CELÉ PORTFOLIO", line=dict(color='green', width=4)))
+            
+            # 3. Čáry vybraných titulů
+            for title in selected_titles:
+                r_stock = df_p[df_p["Název"] == title].iloc[0]
+                if not r_stock["History"].empty:
+                    s_stock = r_stock["History"].reindex(idx_h.index, method='ffill').tail(target_days+1)
+                    if not s_stock.empty and s_stock.iloc[0] > 0:
+                        s_norm = (s_stock / s_stock.iloc[0] - 1) * 100
+                        fig.add_trace(go.Scatter(x=s_norm.index, y=s_norm, name=title))
+
+            fig.update_layout(title=f"Relativní změna za {time_frame} (%)", hovermode="x unified", height=600)
             st.plotly_chart(fig, use_container_width=True)
 
-    elif page == "⚙️ Ostatní":
-        df_m = df_p.copy()
-        for t_fix in ['NVO', 'GSK']:
-            df_m.loc[df_m['Ticker'].str.contains(t_fix, case=False, na=False), 'Měna'] = 'USD'
-        st.plotly_chart(px.sunburst(df_m, path=['Měna', 'Název'], values='Hodnota CZK', color='Měna', color_discrete_map={'CZK':'#ADD8E6','EUR':'#00008B','USD':'#FF0000'}).update_layout(height=700), use_container_width=True)
+    # ... Strategie a Ostatní ...
+    elif page == "🧠 Strategie":
+        c1, c2 = st.columns(2)
+        with c1: st.plotly_chart(px.bar(df_p, x='Charakter', y='Hodnota CZK', color='Název', title="Dle Charakteru").update_layout(showlegend=False, height=700), use_container_width=True)
+        with c2: st.plotly_chart(px.bar(df_p, x='Sentiment', y='Hodnota CZK', color='Název', title="Dle Sentimentu").update_layout(showlegend=False, height=700), use_container_width=True)
 
 except Exception as e:
-    st.error(f"Kritická chyba: {e}")
+    st.error(f"Chyba: {e}")
