@@ -103,7 +103,7 @@ try:
         total_val += val
         total_ref += ks * ref_price * rate
         
-        processed.append({**r, "TC": tc, "Val": val, "Zisk%": ((tc - ref_price)/ref_price*100), "DivTotal": div_total, "History": info["history"], **earn_data.get(t, {"earn_dt":"-", "days_to":"-"})})
+        processed.append({**r, "TC": tc, "Ref": ref_price, "Val": val, "Zisk%": ((tc - ref_price)/ref_price*100), "DivTotal": div_total, "History": info["history"], **earn_data.get(t, {"earn_dt":"-", "days_to":"-"})})
     
     df_p = pd.DataFrame(processed)
 
@@ -122,11 +122,11 @@ try:
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
     
     elif page == "📈 Výkonnost":
-        idx_t = st.radio("Index:", ["^GSPC", "^GDAXI"], horizontal=True)
+        # ... (zůstává funkční verze)
         sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
-        idx_h = m_data[idx_t]["history"].tail(target_days)
+        idx_h = m_data["^GSPC"]["history"].tail(target_days)
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
+        fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="S&P 500", line=dict(dash='dash')))
         port_h = pd.Series(0.0, index=idx_h.index)
         for _, r in df_p.iterrows():
             h = r["History"].tail(target_days)
