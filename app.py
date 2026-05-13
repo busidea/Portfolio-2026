@@ -22,12 +22,11 @@ def get_fx_rates():
 def get_earnings_data(_tickers):
     earnings_info = {}
     today = datetime.now().date()
-    # Převedeme _tickers na standardní seznam, aby se s ním lépe pracovalo
-    ticker_list = list(_tickers)
-    for t in ticker_list:
-        if not str(t).startswith("^"):
+    for t in list(_tickers):
+        symbol = str(t)
+        if not symbol.startswith("^"):
             try:
-                tk = yf.Ticker(str(t))
+                tk = yf.Ticker(symbol)
                 cal = tk.calendar
                 e_date = None
                 if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
@@ -36,10 +35,10 @@ def get_earnings_data(_tickers):
                 if e_date and hasattr(e_date, 'date'):
                     e_date = e_date.date()
                     if e_date >= today:
-                        earnings_info[str(t)] = {"date": e_date.strftime('%d.%m.%Y'), "days": (e_date - today).days}
+                        earnings_info[symbol] = {"date": e_date.strftime('%d.%m.%Y'), "days": (e_date - today).days}
                         continue
             except: pass
-        earnings_info[str(t)] = {"date": "-", "days": "-"}
+        earnings_info[symbol] = {"date": "-", "days": "-"}
     return earnings_info
 
 @st.cache_data(ttl=600)
@@ -47,7 +46,6 @@ def load_market_data(_tickers):
     data = {}
     all_symbols = [str(t).strip() for t in _tickers if str(t).strip()]
     all_symbols += ["^GSPC", "^GDAXI"]
-    
     try:
         raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False, actions=True)
     except:
@@ -55,18 +53,31 @@ def load_market_data(_tickers):
 
     for t in all_symbols:
         try:
-            cp = 0
+            cp, dv = 0, 0
             if not raw_hist.empty:
-                try:
-                    t_df = raw_hist[t].dropna(subset=['Close']) if len(all_symbols) > 1 else raw_hist.dropna(subset=['Close'])
-                    if not t_df.empty: cp = t_df['Close'].iloc[-1]
-                except: pass
-            data[t] = {"price": cp}
-        except:
-            data[t] = {"price": 0}
+                t_df = raw_hist[t].dropna(subset=['Close']) if len(all_symbols) > 1 else raw_hist.dropna(subset=['Close'])
+                if not t_df.empty:
+                    cp = t_df['Close'].iloc[-1]
+                    if 'Dividends' in t_df.columns:
+                        dv = t_df[t_df.index >= (datetime.now() - timedelta(days=365))]['Dividends'].sum()
+            data[t] = {"price": cp, "div": dv}
+        except: data[t] = {"price": 0, "div": 0}
     return data
 
-# --- 2. LOGIKA ---
+# --- 2. STYLY ---
+st.markdown("""
+<style>
+    [data-testid="stSidebarNav"] { display: none; }
+    .portfolio-table { width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; }
+    .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 8px 10px; text-align: right; }
+    .portfolio-table td { padding: 7px 10px; border-bottom: 1px solid #eee; }
+    .ticker-name { font-weight: 700; }
+    .num { text-align: right; font-family: 'Courier New', monospace; }
+    .warn-cell { background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 3. LOGIKA A STRÁNKY ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
@@ -78,23 +89,33 @@ try:
     fx = get_fx_rates()
 
     st.sidebar.title("💎 MENU")
-    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "⚙️ Ostatní"])
+    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
     
     processed = []
     for _, r in df_raw.iterrows():
         t = str(r["Ticker"]).strip()
-        info = m_data.get(t, {"price": 0})
+        info = m_data.get(t, {"price": 0, "div": 0})
         earn = earn_data.get(t, {"date": "-", "days": "-"})
-        val_czk = float(r['Ks']) * info["price"] * fx.get(str(r["Měna"]).strip(), 1.0)
+        val_czk = float(str(r['Ks']).replace(',','.')) * info["price"] * fx.get(str(r["Měna"]).strip(), 1.0)
         processed.append({**r, **info, **earn, "Hodnota CZK": val_czk})
     df_p = pd.DataFrame(processed)
 
     if page == "💰 Přehled":
-        st.subheader("Aktuální stav portfolia")
-        st.table(df_p[['Název', 'price', 'date', 'days']])
-    else:
-        st.subheader("Rozložení měn")
-        st.plotly_chart(px.sunburst(df_p, path=['Měna', 'Název'], values='Hodnota CZK'))
+        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th>KS</th><th>Cena</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
+        for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
+            e_style = " class='warn-cell'" if (isinstance(r['days'], int) and r['days'] <= 14) else ""
+            html += f"<tr><td><span class='ticker-name'>{r['Název']}</span></td><td class='num'>{r['Ks']}</td><td class='num'>{format_cz(r['price'])}</td><td>{r['date']}</td><td{e_style}>{r['days']}</td></tr>"
+        st.write(html + "</tbody></table>", unsafe_allow_html=True)
+    elif page == "🖼️ Grafika":
+        fig = px.treemap(df_p, path=['Obor (Sektor)', 'Název'], values='Hodnota CZK')
+        st.plotly_chart(fig, use_container_width=True)
+    elif page == "📈 Výkonnost":
+        st.subheader("Analýza výkonnosti")
+        st.info("Sekce výkonnosti je připravena.")
+    elif page == "⚙️ Ostatní":
+        st.subheader("Rozložení dle měn")
+        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='Hodnota CZK', color='Měna')
+        st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
     st.error(f"Chyba: {e}")
