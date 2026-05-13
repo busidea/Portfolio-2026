@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
-# --- 1. STYLY ---
+# --- STYLY ---
 st.markdown("""
 <style>
     .portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -20,87 +20,88 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. FUNKCE ---
+# --- FUNKCE ---
 def format_cz(value, decimals=2):
     try: return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
     except: return "0"
 
 @st.cache_data(ttl=600)
-def get_data(tickers):
-    all_sym = list(set(tickers + ["^GSPC", "^GDAXI"]))
-    raw = yf.download(all_sym, period="2y", interval="1d", group_by='ticker', progress=False)
+def get_full_data(_tickers):
+    fx = {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
     data = {}
+    all_sym = list(set(_tickers + ["^GSPC", "^GDAXI"]))
+    raw = yf.download(all_sym, period="2y", interval="1d", group_by='ticker', progress=False)
+    
+    today = datetime.now().date()
     for t in all_sym:
         hist = raw[t]['Close'].ffill().dropna() if t in raw else pd.Series()
         div = raw[t]['Dividends'].sum() if 'Dividends' in raw[t].columns else 0
-        data[t] = {"price": hist.iloc[-1] if not hist.empty else 0, "history": hist, "div": div}
-    return data
+        
+        # Earnings
+        earn_dt, days_to = "-", "-"
+        if not t.startswith("^"):
+            try:
+                tk = yf.Ticker(t)
+                cal = tk.calendar
+                e_date = cal.iloc[0, 0] if isinstance(cal, pd.DataFrame) else None
+                if e_date and hasattr(e_date, 'date'):
+                    e_date = e_date.date()
+                    if e_date >= today:
+                        earn_dt = e_date.strftime('%d.%m.%Y')
+                        days_to = (e_date - today).days
+            except: pass
+        
+        data[t] = {"price": hist.iloc[-1] if not hist.empty else 0, "history": hist, "div": div, "earn_dt": earn_dt, "days_to": days_to}
+    return data, fx
 
-# --- 3. LOGIKA A DATA ---
-SHEET_URL = f"https://docs.google.com/spreadsheets/d/1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA/export?format=csv"
+# --- LOGIKA ---
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA/export?format=csv"
 df_raw = pd.read_csv(SHEET_URL).dropna(subset=['Ticker'])
-m_data = get_data(df_raw["Ticker"].unique().tolist())
+m_data, fx = get_full_data(df_raw["Ticker"].unique().tolist())
 
 # Sidebar
-st.sidebar.title("💎 MENU")
 page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
-view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
-time_frame = st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den"], index=1)
-days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
+target_days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den"], index=1)]
 
 processed = []
 total_val = 0
-total_ref = 0
 for _, r in df_raw.iterrows():
     t = str(r["Ticker"]).strip()
     m = m_data.get(t, {"price": 0, "div": 0, "history": pd.Series()})
+    rate = fx.get(str(r["Měna"]).strip(), 1.0)
     ks = float(str(r['Ks']).replace(',','.'))
-    ref_b = float(str(r['Průměrná nákupní cena' if view_mode == "Standard" else 'Nákupní cena včetně opcí']).replace(',','.'))
+    ref_b = float(str(r['Průměrná nákupní cena']).replace(',','.'))
     
-    val = ks * m["price"] * 23.4
-    ref_val = ks * (m["history"].iloc[-days-1] if len(m["history"]) > days else ref_b) * 23.4
+    val_czk = ks * m["price"] * rate
+    total_val += val_czk
     
-    total_val += val
-    total_ref += ref_val
-    processed.append({**r, "TC": m["price"], "Val": val, "Zisk%": ((m["price"]-ref_b)/ref_b*100), "Div": m["div"]*ks*23.4, "History": m["history"]})
-
+    processed.append({**r, "TC": m["price"], "Val": val_czk, "Zisk%": ((m["price"]-ref_b)/ref_b*100), 
+                      "Div": m["div"]*ks*rate, "Earn": m["earn_dt"], "Days": m["days_to"], "History": m["history"]})
 df_p = pd.DataFrame(processed)
 
-# Sidebar Metriky
-st.sidebar.divider()
-st.sidebar.metric("Celkem CZK", f"{format_cz(total_val, 0)} CZK")
-diff = total_val - total_ref
-st.sidebar.metric(f"Změna ({time_frame})", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100):.2f} %")
-
-# --- 4. STRÁNKY ---
+# --- STRÁNKY ---
 if page == "💰 Přehled":
-    html = "<table class='portfolio-table'><thead><tr><th>Název</th><th>KS</th><th>Cena</th><th>CZK</th><th>Zisk %</th><th>Div (CZK)</th></tr></thead><tbody>"
+    html = "<table class='portfolio-table'><thead><tr><th>Název</th><th>Cena</th><th>CZK</th><th>Zisk %</th><th>Div</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
     for _, r in df_p.iterrows():
         z_cls = "pos" if r["Zisk%"] >= 0 else "neg"
-        html += f"<tr><td>{r['Název']}</td><td class='num'>{r['Ks']:.0f}</td><td class='num'>{format_cz(r['TC'])}</td><td class='num'>{format_cz(r['Val'], 0)}</td><td class='num {z_cls}'>{r['Zisk%']:.2f}%</td><td class='num'>{format_cz(r['Div'], 0)}</td></tr>"
+        w_cls = "warn" if str(r["Days"]).isdigit() and int(r["Days"]) <= 14 else ""
+        html += f"<tr><td>{r['Název']}</td><td class='num'>{format_cz(r['TC'])}</td><td class='num'>{format_cz(r['Val'], 0)}</td><td class='num {z_cls}'>{r['Zisk%']:.2f}%</td><td class='num'>{format_cz(r['Div'], 0)}</td><td>{r['Earn']}</td><td class='{w_cls}'>{r['Days']}</td></tr>"
     st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
 elif page == "🖼️ Grafika":
     fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Obor (Sektor)', 'Název'], values='Val')
-    fig.update_layout(height=800)
+    fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
     st.plotly_chart(fig, use_container_width=True)
 
 elif page == "📈 Výkonnost":
+    # (Ponechána funkční verze)
     idx_t = st.radio("Index:", ["^GSPC", "^GDAXI"], horizontal=True)
-    sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
-    
-    idx_h = m_data[idx_t]["history"].tail(days)
     fig = go.Figure()
+    idx_h = m_data[idx_t]["history"].tail(target_days)
     fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
-    
     port_h = pd.Series(0.0, index=idx_h.index)
     for _, r in df_p.iterrows():
         h = r["History"].reindex(idx_h.index, method='ffill')
-        port_h += (h/h.iloc[0]-1)*100 * (r["Val"]/total_val)
-        if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
-    
+        if not h.empty: port_h += (h/h.iloc[0]-1)*100 * (r["Val"]/total_val)
     fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
     st.plotly_chart(fig, use_container_width=True)
-
-elif page == "⚙️ Ostatní":
-    st.plotly_chart(px.sunburst(df_p, path=['Měna', 'Název'], values='Val'), use_container_width=True)
