@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
-# --- 1. FUNKCE ---
+# --- FUNKCE ---
 def format_cz(value, decimals=2):
     try: return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
     except: return "0"
@@ -46,17 +46,19 @@ def load_market_data(_tickers):
     except: raw_hist = pd.DataFrame()
     for t in all_symbols:
         try:
-            cp, hist = 0, pd.Series()
+            cp, dv, hist = 0, 0, pd.Series()
             if not raw_hist.empty:
                 t_df = raw_hist[t].dropna(subset=['Close']) if len(all_symbols) > 1 else raw_hist.dropna(subset=['Close'])
                 if not t_df.empty:
                     cp = t_df['Close'].iloc[-1]
                     hist = t_df['Close']
-            data[t] = {"price": cp, "history": hist}
-        except: data[t] = {"price": 0, "history": pd.Series()}
+                    if 'Dividends' in t_df.columns:
+                        dv = t_df[t_df.index >= (datetime.now() - timedelta(days=365))]['Dividends'].sum()
+            data[t] = {"price": cp, "div": dv, "history": hist}
+        except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# --- 2. STYLY ---
+# --- STYLY ---
 st.markdown("""
 <style>
     .portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -69,7 +71,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. LOGIKA ---
+# --- LOGIKA ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
@@ -89,7 +91,7 @@ try:
     total_val, total_ref = 0, 0
     for _, r in df_raw.iterrows():
         t = str(r["Ticker"]).strip()
-        info = m_data.get(t, {"price": 0, "history": pd.Series()})
+        info = m_data.get(t, {"price": 0, "div": 0, "history": pd.Series()})
         ks = float(str(r['Ks']).replace(',','.'))
         tc = info["price"]
         ref_buy = float(str(r['Průměrná nákupní cena' if view_mode == "Standard" else 'Nákupní cena včetně opcí']).replace(',','.'))
@@ -97,26 +99,26 @@ try:
         
         rate = fx.get(str(r["Měna"]).strip(), 1.0)
         val = ks * tc * rate
-        ref_val = ks * ref_price * rate
-        
+        div_total = info["div"] * ks * rate
         total_val += val
-        total_ref += ref_val
-        processed.append({**r, "TC": tc, "Ref": ref_price, "Val": val, "Zisk%": ((tc - ref_price)/ref_price*100), "History": info["history"], **earn_data.get(t, {"earn_dt":"-", "days_to":"-"})})
+        total_ref += ks * ref_price * rate
+        
+        processed.append({**r, "TC": tc, "Val": val, "Zisk%": ((tc - ref_price)/ref_price*100), "DivTotal": div_total, "History": info["history"], **earn_data.get(t, {"earn_dt":"-", "days_to":"-"})})
     
     df_p = pd.DataFrame(processed)
 
     st.sidebar.divider()
-    st.sidebar.metric("Celkem", f"{format_cz(total_val, 0)} CZK")
+    st.sidebar.metric("Celkem CZK", f"{format_cz(total_val, 0)} CZK")
     diff = total_val - total_ref
-    st.sidebar.metric(f"Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100):.2f} %")
+    st.sidebar.metric(f"Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     if page == "💰 Přehled":
-        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th>Cena</th><th>CZK</th><th>Zisk %</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
+        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th>KS</th><th>Cena</th><th>CZK</th><th>Zisk %</th><th>Div</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
         for _, r in df_p.iterrows():
             tc_cls = "pos" if r["TC"] >= r["Ref"] else "neg"
             z_cls = "pos" if r["Zisk%"] >= 0 else "neg"
             w_cls = "warn" if str(r["days_to"]).isdigit() and int(r["days_to"]) <= 14 else ""
-            html += f"<tr><td>{r['Název']}</td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'>{format_cz(r['Val'], 0)}</td><td class='num {z_cls}'>{r['Zisk%']:.2f}%</td><td style='text-align:center'>{r['earn_dt']}</td><td class='{w_cls}'>{r['days_to']}</td></tr>"
+            html += f"<tr><td>{r['Název']}</td><td class='num'>{r['Ks']:.0f}</td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'>{format_cz(r['Val'], 0)}</td><td class='num {z_cls}'>{r['Zisk%']:.2f}%</td><td class='num'>{format_cz(r['DivTotal'], 0)}</td><td style='text-align:center'>{r['earn_dt']}</td><td class='{w_cls}'>{r['days_to']}</td></tr>"
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
     
     elif page == "📈 Výkonnost":
@@ -125,7 +127,6 @@ try:
         idx_h = m_data[idx_t]["history"].tail(target_days)
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
-        
         port_h = pd.Series(0.0, index=idx_h.index)
         for _, r in df_p.iterrows():
             h = r["History"].tail(target_days)
@@ -136,8 +137,8 @@ try:
         st.plotly_chart(fig, use_container_width=True)
         
     elif page == "🖼️ Grafika":
-        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='Val')
+        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Obor (Sektor)', 'Název'], values='Val', color='Obor (Sektor)')
+        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
         fig.update_layout(height=800)
         st.plotly_chart(fig, use_container_width=True)
-
 except Exception as e: st.error(f"Chyba: {e}")
