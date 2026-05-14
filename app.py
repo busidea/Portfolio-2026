@@ -68,7 +68,6 @@ st.markdown("""
     .portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 8px; text-align: right; }
     .portfolio-table td { padding: 7px; border-bottom: 1px solid #eee; }
-    .ticker-name { font-weight: 700; }
     .num { text-align: right; font-family: monospace; }
     .pos-text { color: #2e7d32; font-weight: bold; }
     .neg-text { color: #d32f2f; font-weight: bold; }
@@ -108,7 +107,6 @@ try:
         total_val += val_czk
         total_ref += (ks * ref_price * rate)
         
-        # Div/ks přepočet (roční součet na ks)
         div_ks = info["div"]
         
         processed.append({**r, "TC": curr_price, "RefPrice": ref_price, "Hodnota CZK": val_czk, 
@@ -122,12 +120,14 @@ try:
     st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     if page == "💰 Přehled":
-        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>Cena</th><th class='num'>CZK</th><th class='num'>Zisk %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
+        # PŘIDÁNA HLAVIČKA "KS"
+        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Cena</th><th class='num'>CZK</th><th class='num'>Zisk %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
         for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
             tc_cls = "pos-text" if r["TC"] >= r["RefPrice"] else "neg-text"
             z_cls = "pos-text" if r["Zisk %"] >= 0 else "neg-text"
             w_cls = " class='warn-cell'" if str(r['days_to']).isdigit() and int(r['days_to']) <= 14 else ""
-            html += f"<tr><td><b>{r['Název']}</b></td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td><td class='num {z_cls}'>{r['Zisk %']:.2f}%</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['earn_dt']}</td><td{w_cls}>{r['days_to']}</td></tr>"
+            # PŘIDÁN SLOUPEC S POČTEM KUSŮ (r['Ks'])
+            html += f"<tr><td><b>{r['Název']}</b></td><td class='num'>{r['Ks']:.0f}</td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td><td class='num {z_cls}'>{r['Zisk %']:.2f}%</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['earn_dt']}</td><td{w_cls}>{r['days_to']}</td></tr>"
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
     elif page == "🖼️ Grafika":
