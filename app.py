@@ -26,9 +26,11 @@ st.markdown("""
 def safe_float(val):
     try:
         if val is None or str(val).lower() in ["nan", "none", "-", ""]: return 0.0
-        # Ošetření českého formátu: nahrazení čáreky tečkou a smazání mezer (např. u tisíců)
-        clean_val = str(val).replace(",", ".").replace(" ", "").strip()
-        return float(clean_val)
+        # Agresivní vyčištění textu (odstranění mezer, měn, symbolů)
+        clean_val = str(val).replace(",", ".").replace(" ", "").replace("\xa0", "")
+        for badge in ["Kč", "$", "EUR", "%", "USD"]:
+            clean_val = clean_val.replace(badge, "")
+        return float(clean_val.strip())
     except: return 0.0
 
 def safe_date_diff(earn_val, today):
@@ -58,8 +60,9 @@ def nacti_seznam(odkaz):
     try:
         csv_url = odkaz.replace('/edit?usp=sharing', '/export?format=csv')
         df = pd.read_csv(csv_url)
+        # Očištění názvů sloupců od neviditelných mezer na začátku/konci
         df.columns = [c.strip() for c in df.columns]
-        df['Ticker'] = df['Ticker'].astype(str).str.upper()
+        df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
         return df
     except: return pd.DataFrame()
 
@@ -67,18 +70,24 @@ def nacti_seznam(odkaz):
 def fetch_all_data(df_input):
     res = []
     nakupni_data = {}
+    
+    # Hledání sloupců pomocí filtru, kdyby se jmenovaly trochu jinak
+    col_std = next((c for c in df_input.columns if "průměrná nákupní" in c.lower()), "Průměrná nákupní cena")
+    col_opc = next((c for c in df_input.columns if "včetně opcí" in c.lower()), "Nákupní cena včetně opcí")
+    col_kat = next((c for c in df_input.columns if "kategorie" in c.lower()), "Kategorie")
+    col_earn = next((c for c in df_input.columns if "earnings" in c.lower()), "Earnings Day")
+
     for row in df_input.to_dict('records'):
         t = str(row.get('Ticker', '')).strip().upper()
-        if t:
+        if t and t not in ["NAN", "NONE", "-"]:
             nakupni_data[t] = {
-                "cena_std": safe_float(row.get("Průměrná nákupní cena")),
-                "cena_opc": safe_float(row.get("Nákupní cena včetně opcí")),
-                "kat": str(row.get('Kategorie')),
-                "earn": row.get('Earnings Day')
+                "cena_std": safe_float(row.get(col_std)),
+                "cena_opc": safe_float(row.get(col_opc)),
+                "kat": str(row.get(col_kat, 'Vše')),
+                "earn": row.get(col_earn)
             }
 
     for t, n_data in nakupni_data.items():
-        if not t or t in ["-", "nan", "NAN"]: continue
         try:
             tk = yf.Ticker(t); inf = tk.info; hi = tk.history(period="3mo")
             rsi = 50
@@ -98,6 +107,16 @@ def fetch_all_data(df_input):
 
 df_raw_list = nacti_seznam(ODKAZ_NA_TABULKU)
 raw_data = fetch_all_data(df_raw_list)
+
+# --- DIAGNOSTICKÝ BOX ---
+with st.expander("🔍 DIAGNOSTIKA NAČÍTÁNÍ DAT (Rozklikni pro kontrolu)", expanded=False):
+    st.write("**Nalezené sloupce v Google tabulce:**", list(df_raw_list.columns))
+    st.write("**Ukázka prvních 3 řádků z Google tabulky (Surová data):**")
+    if not df_raw_list.empty:
+        st.dataframe(df_raw_list.head(3))
+    st.write("**Zpracovaná data pro aplikaci (co vidí Python interně):**")
+    diag_rows = [{"Ticker": d["t"], "Načtená Cena Std": d["cena_std"], "Načtená Cena Opc": d["cena_opc"]} for d in raw_data]
+    st.dataframe(pd.DataFrame(diag_rows))
 
 # --- 4. SIDEBAR ---
 st.sidebar.markdown("### **📊 Menu**")
