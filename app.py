@@ -26,7 +26,9 @@ st.markdown("""
 def safe_float(val):
     try:
         if val is None or str(val).lower() in ["nan", "none", "-", ""]: return 0.0
-        return float(val)
+        # Ošetření českého formátu: nahrazení čáreky tečkou a smazání mezer (např. u tisíců)
+        clean_val = str(val).replace(",", ".").replace(" ", "").strip()
+        return float(clean_val)
     except: return 0.0
 
 def safe_date_diff(earn_val, today):
@@ -221,12 +223,11 @@ if stranka == "Scoring Matrix":
                 if col == "Výkonnost":
                     s[i] = f"color: {'#1b5e20' if r['_perf']>0 else '#b71c1c'}; font-weight: bold; background-color: {'#e8f5e9' if r['_perf']>0 else '#ffebee'}"
                 
-                # Ruční stabilní náhrada za background_gradient pro sloupec Score
                 if col == "Score":
                     sc = r.get("Score", 0)
-                    if sc > 100: s[i] = 'background-color: #c8e6c9; color: #1b5e20; font-weight: bold;' # Zelená
-                    elif sc > 50: s[i] = 'background-color: #fff9c4; color: #f57f17; font-weight: bold;' # Žlutá
-                    else: s[i] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold;' # Červená
+                    if sc > 100: s[i] = 'background-color: #c8e6c9; color: #1b5e20; font-weight: bold;'
+                    elif sc > 50: s[i] = 'background-color: #fff9c4; color: #f57f17; font-weight: bold;'
+                    else: s[i] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold;'
                     
                 val = r.get(f"_raw_{col}", 0)
                 if col == "P/E" and val > 25: s[i] = 'background-color: #ffebee'
