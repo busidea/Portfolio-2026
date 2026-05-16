@@ -105,7 +105,6 @@ st.sidebar.divider()
 filtr_kat = st.sidebar.selectbox("Filtr kategorií:", ["Portfolio", "Sledované", "Vše"], index=0)
 filtered_data = [d for d in raw_data if filtr_kat == "Vše" or d["kat"] == filtr_kat]
 
-# Elegantní sjednocený ovladač období, jak jsi navrhl
 st.sidebar.markdown("### **⏱️ Období / Výkonnost**")
 obdobi = st.sidebar.selectbox("Zobrazit změnu za:", ["1 Den", "1 Týden", "1 Měsíc", "Od pořízení (Standard)", "Od pořízení (s opcemi)"], index=0)
 
@@ -166,7 +165,6 @@ if stranka == "Scoring Matrix":
         d_yield = sg("dividendYield")
         if d_yield < 0.2 and d_yield > 0: d_yield *= 100 
 
-        # Logika výpočtu sloupce Výkonnost na základě vybraného období
         aktuarni_cena = sg("currentPrice")
         vypoctena_zmena = 0.0
 
@@ -222,13 +220,21 @@ if stranka == "Scoring Matrix":
                     s[i] = "font-weight: bold;"
                 if col == "Výkonnost":
                     s[i] = f"color: {'#1b5e20' if r['_perf']>0 else '#b71c1c'}; font-weight: bold; background-color: {'#e8f5e9' if r['_perf']>0 else '#ffebee'}"
+                
+                # Ruční stabilní náhrada za background_gradient pro sloupec Score
+                if col == "Score":
+                    sc = r.get("Score", 0)
+                    if sc > 100: s[i] = 'background-color: #c8e6c9; color: #1b5e20; font-weight: bold;' # Zelená
+                    elif sc > 50: s[i] = 'background-color: #fff9c4; color: #f57f17; font-weight: bold;' # Žlutá
+                    else: s[i] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold;' # Červená
+                    
                 val = r.get(f"_raw_{col}", 0)
                 if col == "P/E" and val > 25: s[i] = 'background-color: #ffebee'
                 if col == "Dluh D/E" and val > 120: s[i] = 'background-color: #ffcdd2'
             return s
         
         cols_to_hide = [c for c in df.columns if c.startswith("_raw_") or c.startswith("_")] + ["Type"]
-        st.dataframe(df.style.apply(style_matrix, axis=1).background_gradient(subset=["Score"], cmap="RdYlGn", vmin=0, vmax=150),
+        st.dataframe(df.style.apply(style_matrix, axis=1),
                     use_container_width=True, hide_index=True, height=800,
                     column_order=["Titul", "Cena", "Výkonnost"] + mapping_keys + ["Score"],
                     column_config={c: None for c in cols_to_hide})
