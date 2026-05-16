@@ -87,8 +87,12 @@ try:
     st.sidebar.title("💎 MENU")
     page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
-    time_frame = st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den"], index=1)
-    target_days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
+    
+    # NOVÝ OVLADAČ ROZŠÍŘENÝ O VOLBU "Od nákupu"
+    time_frame = st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den", "Od nákupu"], index=1)
+    
+    # Pojistka pro grafika: pokud je vybráno "Od nákupu", graf počítá s 1 rokem (252 dní)
+    graph_days = 252 if time_frame == "Od nákupu" else {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
 
     processed = []
     total_val, total_ref = 0, 0
@@ -99,11 +103,20 @@ try:
         ks = pd.to_numeric(str(r['Ks']).replace(',','.'), errors='coerce') or 0
         p_std = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.'), errors='coerce') or 0
         p_opt = pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.'), errors='coerce') or 0
+        
+        # Zvolená nákupní referenční cena (Standard vs Opce)
         ref_buy = p_std if view_mode == "Standard" else p_opt
         curr_price = info["price"]
         val_czk = ks * curr_price * rate
         hist = info["history"]
-        ref_price = hist.iloc[-(target_days + 1)] if (not hist.empty and len(hist) > target_days) else ref_buy
+        
+        # CHYTRÁ VÝHYBKA PRO VÝPOČET REFERENČNÍ CENY
+        if time_frame == "Od nákupu":
+            ref_price = ref_buy
+        else:
+            target_days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
+            ref_price = hist.iloc[-(target_days + 1)] if (not hist.empty and len(hist) > target_days) else ref_buy
+            
         total_val += val_czk
         total_ref += (ks * ref_price * rate)
         
@@ -120,13 +133,11 @@ try:
     st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     if page == "💰 Přehled":
-        # PŘIDÁNA HLAVIČKA "KS"
         html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Cena</th><th class='num'>CZK</th><th class='num'>Zisk %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
         for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
             tc_cls = "pos-text" if r["TC"] >= r["RefPrice"] else "neg-text"
             z_cls = "pos-text" if r["Zisk %"] >= 0 else "neg-text"
             w_cls = " class='warn-cell'" if str(r['days_to']).isdigit() and int(r['days_to']) <= 14 else ""
-            # PŘIDÁN SLOUPEC S POČTEM KUSŮ (r['Ks'])
             html += f"<tr><td><b>{r['Název']}</b></td><td class='num'>{r['Ks']:.0f}</td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td><td class='num {z_cls}'>{r['Zisk %']:.2f}%</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['earn_dt']}</td><td{w_cls}>{r['days_to']}</td></tr>"
         st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
@@ -139,7 +150,9 @@ try:
     elif page == "📈 Výkonnost":
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
         sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
-        idx_h = m_data[idx_t]["history"].tail(target_days + 1)
+        
+        # Graf pracuje s bezpečnou proměnnou graph_days (při "Od nákupu" zobrazí 1 rok)
+        idx_h = m_data[idx_t]["history"].tail(graph_days + 1)
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
         port_h = pd.Series(0.0, index=idx_h.index)
