@@ -1,294 +1,157 @@
 import streamlit as st
-import pandas as pd
 import yfinance as yf
-from datetime import datetime, date
-import re
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 
-# --- 1. KONFIGURACE A STYL ---
-st.set_page_config(page_title="Investiční Terminál", layout="wide")
+st.set_page_config(page_title="Investiční Portál", layout="wide")
 
-st.markdown("""
-    <style>
-    .block-container { padding-top: 3.5rem; padding-bottom: 0rem; }
-    [data-testid="stDataFrame"] td { text-align: right !important; }
-    
-    /* Vynucené zvýraznění prvního sloupce */
-    [data-testid="stDataFrame"] [role="gridcell"]:first-child { 
-        font-weight: bold !important;
-        color: #004080 !important;
-    }
-    
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. POMOCNÉ FUNKCE (ZESÍLENÉ) ---
-def safe_float(val):
-    if pd.isna(val) or val is None:
-        return 0.0
-    s = str(val).strip()
-    if s.lower() in ["nan", "none", "-", "", "null"]:
-        return 0.0
-    
-    try:
-        # Odstraníme běžné měny a mezery (včetně nezlomitelných \xa0)
-        s = re.sub(r'[^\d.,-]', '', s)
-        
-        # Pokud text obsahuje jak čárku, tak tečku (např. 1,250.50 nebo 1.250,50)
-        if ',' in s and '.' in s:
-            if s.rfind(',') > s.rfind('.'):  # 1.250,50 -> evropský styl tisíců
-                s = s.replace('.', '').replace(',', '.')
-            else:  # 1,250.50 -> anglosaský styl
-                s = s.replace(',', '')
-        else:
-            # Pokud obsahuje jen čárku, předpokládáme, že je to desetinná čárka (český styl: 37,45 -> 37.45)
-            s = s.replace(',', '.')
-            
-        return float(s)
-    except:
-        return 0.0
-
-def safe_date_diff(earn_val, today):
-    if pd.isna(earn_val) or str(earn_val).strip() in ["", "-", "nan", "None"]:
-        return 999
-    try:
-        dt = pd.to_datetime(earn_val, dayfirst=True).date()
-        return (dt - today).days
-    except: return 999
-
-def get_b(val, pasma):
-    if val is None or val == 0: return 0
-    for p in pasma:
-        if val <= p["h"]: return p["b"]
-    return pasma[-1]["b"]
-
-def fmt(val, precision=1, is_pct=False):
-    if val is None or val == 0: return "0.0" + ("%" if is_pct else "")
-    res = f"{val:.{precision}f}"
-    return res + "%" if is_pct else res
-
-# --- 3. NAČTENÍ DAT ---
-ODKAZ_NA_TABULKU = "https://docs.google.com/spreadsheets/d/1q90ZZ4EjYCqyrReOgm6j_nmJlXEs2aaU6YWHAw7aoZg/edit?usp=sharing"
-
-@st.cache_data(ttl=60)  # Sníženo pro rychlejší testování změn
-def nacti_seznam(odkaz):
-    try:
-        csv_url = odkaz.replace('/edit?usp=sharing', '/export?format=csv')
-        
-        # Zkusíme nejprve standardní čárku
-        df = pd.read_csv(csv_url, sep=",")
-        
-        # Pokud se načetl jen 1 sloupec, zkusíme středník
-        if len(df.columns) <= 1:
-            df = pd.read_csv(csv_url, sep=";")
-            
-        df.columns = [c.strip() for c in df.columns]
-        
-        # Najdeme sloupec s Tickerem
-        col_ticker = next((c for c in df.columns if "ticker" in c.lower()), None)
-        if col_ticker:
-            df['Ticker'] = df[col_ticker].astype(str).str.upper().str.strip()
-        else:
-            df['Ticker'] = df.iloc[:, 1].astype(str).str.upper().str.strip() if len(df.columns) > 1 else df.iloc[:, 0].astype(str).str.upper().str.strip()
-            
-        return df
-    except: 
-        return pd.DataFrame()
+# --- 1. FUNKCE ---
+def format_cz(value, decimals=2):
+    try: return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" " , " ")
+    except: return "0"
 
 @st.cache_data(ttl=3600)
-def fetch_all_data(df_input):
-    res = []
-    if df_input.empty: return res
-    
-    # Flexibilní vyhledání sloupců
-    col_std = next((c for c in df_input.columns if "průměrná nákupní" in c.lower() or "prumerna" in c.lower() or "nákupní cena" in c.lower()), None)
-    col_opc = next((c for c in df_input.columns if "včetně opcí" in c.lower() or "vcetne" in c.lower() or "opcí" in c.lower()), None)
-    col_kat = next((c for c in df_input.columns if "charakter" in c.lower() or "kategorie" in c.lower() or "sentiment" in c.lower()), None)
-    col_earn = next((c for c in df_input.columns if "earnings" in c.lower() or "kalendář" in c.lower()), None)
+def get_fx_rates():
+    return {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
 
-    for row in df_input.to_dict('records'):
-        t = str(row.get('Ticker', '')).strip().upper()
-        if t and t not in ["NAN", "NONE", "-", ""]:
-            # Vyčištění případného balastu v tickeru
-            if " " in t: t = t.split()[-1]
-            
-            c_std = safe_float(row.get(col_std)) if col_std else 0.0
-            c_opc = safe_float(row.get(col_opc)) if col_opc else 0.0
-            
+@st.cache_data(ttl=604800)
+def get_earnings_data(_tickers):
+    data = {}
+    today = datetime.now().date()
+    for t in list(_tickers):
+        t_str = str(t).strip()
+        earn_dt, days_to = "-", "-"
+        if not t_str.startswith("^"):
             try:
-                tk = yf.Ticker(t); inf = tk.info; hi = tk.history(period="3mo")
-                rsi = 50
-                if len(hi) > 14:
-                    d = hi['Close'].diff(); g = d.where(d > 0, 0).rolling(14).mean(); l = -d.where(d < 0, 0).rolling(14).mean()
-                    rsi = 100 - (100 / (1 + (g.iloc[-1]/l.iloc[-1]))) if l.iloc[-1] != 0 else 50
-                
-                res.append({
-                    "t": t, "inf": inf, "rsi": rsi, "history": hi,
-                    "kat": "Portfolio", # Výchozí zobrazení
-                    "earn": row.get(col_earn) if col_earn else None,
-                    "cena_std": c_std,
-                    "cena_opc": c_opc,
-                    "name": inf.get('longName', t)
-                })
-            except: 
-                continue
-    return res
+                tk = yf.Ticker(t_str)
+                cal = tk.calendar
+                e_date = None
+                if cal is not None:
+                    if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
+                    elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
+                if e_date and hasattr(e_date, 'date'):
+                    e_date = e_date.date()
+                    if e_date >= today:
+                        earn_dt = e_date.strftime('%d.%m.%Y')
+                        days_to = (e_date - today).days
+            except: pass
+        data[t_str] = {"earn_dt": earn_dt, "days_to": days_to}
+    return data
 
-df_raw_list = nacti_seznam(ODKAZ_NA_TABULKU)
-raw_data = fetch_all_data(df_raw_list)
+@st.cache_data(ttl=600)
+def load_market_data(_tickers):
+    data = {}
+    all_symbols = [str(t).strip() for t in _tickers if str(t).strip()]
+    all_symbols += ["^GSPC", "^GDAXI"]
+    try:
+        raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False, actions=True)
+    except: raw_hist = pd.DataFrame()
+    for t in all_symbols:
+        try:
+            cp, dv, hist = 0, 0, pd.Series()
+            if not raw_hist.empty:
+                t_df = raw_hist[t].dropna(subset=['Close']) if len(all_symbols) > 1 else raw_hist.dropna(subset=['Close'])
+                if not t_df.empty:
+                    cp = t_df['Close'].iloc[-1]
+                    hist = t_df['Close'].ffill()
+                    if 'Dividends' in t_df.columns:
+                        dv = t_df[t_df.index >= (datetime.now() - timedelta(days=365))]['Dividends'].sum()
+            data[t] = {"price": cp, "div": dv, "history": hist}
+        except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
+    return data
 
-# --- DIAGNOSTICKÝ BOX (Zde uvidíš pravdu) ---
-with st.expander("🔍 DIAGNOSTIKA NAČÍTÁNÍ DAT (Rozklikni pro kontrolu)", expanded=True):
-    st.write("**Nalezené názvy sloupců v tabulce:**", list(df_raw_list.columns))
-    if not df_raw_list.empty:
-        st.write("**Ukázka raw řádku z tabulky (co poslal Google):**")
-        st.dataframe(df_raw_list.head(3))
-    st.write("**Co z toho Python vypreparoval (Zde nesmí být nuly!):**")
-    diag_rows = [{"Ticker": d["t"], "Načtená Cena (Standard)": d["cena_std"], "Načtená Cena (S opcemi)": d["cena_opc"]} for d in raw_data]
-    st.dataframe(pd.DataFrame(diag_rows))
+# --- 2. STYLY ---
+st.markdown("""
+<style>
+    .portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 8px; text-align: right; }
+    .portfolio-table td { padding: 7px; border-bottom: 1px solid #eee; }
+    .num { text-align: right; font-family: monospace; }
+    .pos-text { color: #2e7d32; font-weight: bold; }
+    .neg-text { color: #d32f2f; font-weight: bold; }
+    .warn-cell { background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center; }
+</style>
+""", unsafe_allow_html=True)
 
-# --- 4. SIDEBAR ---
-st.sidebar.markdown("### **📊 Menu**")
-stranka = st.sidebar.radio("Zobrazení:", ["Scoring Matrix", "Vnitřní hodnota (IV)", "Kalendář & RSI"], label_visibility="collapsed")
-st.sidebar.divider()
+# --- 3. LOGIKA ---
+SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+try:
+    df_raw = pd.read_csv(SHEET_URL).dropna(subset=['Ticker'])
+    m_data = load_market_data(df_raw["Ticker"].unique())
+    earn_data = get_earnings_data(df_raw["Ticker"].unique())
+    fx = get_fx_rates()
 
-filtr_kat = st.sidebar.selectbox("Filtr kategorií:", ["Portfolio", "Vše"], index=0)
-filtered_data = raw_data # Pro zjednodušení teď bereme všechna napárovaná data
+    st.sidebar.title("💎 MENU")
+    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
+    view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
+    time_frame = st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den"], index=1)
+    target_days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
 
-st.sidebar.markdown("### **⏱️ Období / Výkonnost**")
-obdobi = st.sidebar.selectbox("Zobrazit změnu za:", ["1 Den", "1 Týden", "1 Měsíc", "Od pořízení (Standard)", "Od pořízení (s opcemi)"], index=0)
-
-# --- 5. LOGIKA STRÁNEK ---
-
-if stranka == "Scoring Matrix":
-    strategie = st.sidebar.selectbox("Strategie:", ["Vlastní", "🛡️ Konzervativní", "⚖️ Vyvážená", "🚀 Růstová"])
-    zobrazit_body = st.sidebar.checkbox("⚠️ Detailní body", value=False)
-    
-    h_pe, b_pe = [12, 18, 25, 40, 999], [20, 15, 5, 0, -15]
-    h_ps, b_ps = [1.5, 3, 6, 10, 999], [15, 10, 5, 0, -10]
-
-    if strategie == "🛡️ Konzervativní":
-        h_pe, b_pe = [10, 15, 20, 30, 999], [25, 15, 0, -10, -30]
-        h_ps, b_ps = [1.0, 2, 4, 7, 999], [20, 10, 0, -10, -20]
-    elif strategie == "🚀 Růstová":
-        h_pe, b_pe = [20, 35, 50, 80, 999], [15, 25, 15, 5, -5]
-        h_ps, b_ps = [3, 6, 12, 20, 999], [10, 15, 20, 5, -10]
-
-    def vytvor_p(nazev, zk, def_h, def_b):
-        with st.sidebar.expander(f"📊 {nazev}", expanded=False):
-            d = []
-            for i in range(5):
-                c1, c2 = st.columns(2)
-                h = c1.number_input(f"Do:", value=float(def_h[i]), key=f"{zk}_{i}")
-                b = c2.number_input(f"Body", value=int(def_b[i]), key=f"{zk}_{i}b")
-                d.append({"h": h, "b": b})
-            return d
-
-    p_pe = vytvor_p("P/E", "pe", h_pe, b_pe)
-    p_ps = vytvor_p("P/S", "ps", h_ps, b_ps)
-    p_pb = vytvor_p("P/B", "pb", [1, 2.5, 4, 8, 999], [10, 7, 3, 0, -5])
-    p_pfcf = vytvor_p("P/FCF", "pfcf", [12, 20, 35, 50, 999], [20, 12, 5, 0, -10])
-    p_gm = vytvor_p("H-Marže", "gm", [20, 35, 50, 70, 999], [0, 8, 15, 20, 25])
-    p_nm = vytvor_p("Č-Marže", "nm", [10, 20, 30, 45, 999], [0, 10, 18, 22, 30])
-    p_roe = vytvor_p("ROE", "roe", [12, 22, 35, 55, 999], [0, 10, 15, 20, 25])
-    p_rev = vytvor_p("Tržby y/y", "rev", [0, 10, 20, 35, 999], [-10, 8, 15, 25, 35])
-    p_eps = vytvor_p("Zisk y/y", "eps", [0, 10, 25, 45, 999], [-15, 10, 20, 28, 40])
-    p_deb = vytvor_p("Dluh D/E", "deb", [40, 80, 120, 200, 999], [20, 10, 0, -15, -40])
-    p_div = vytvor_p("Div. výnos", "div", [2, 4, 6, 8, 999], [5, 12, 15, 10, 5])
-    p_pot = vytvor_p("Potenciál", "pot", [8, 18, 28, 45, 999], [0, 10, 18, 25, 35])
+    processed = []
+    total_val, total_ref = 0, 0
+    for _, r in df_raw.iterrows():
+        t = str(r["Ticker"]).strip()
+        info = m_data.get(t, {"price": 0, "div": 0, "history": pd.Series()})
+        rate = fx.get(str(r["Měna"]).strip(), 1.0)
+        ks = pd.to_numeric(str(r['Ks']).replace(',','.'), errors='coerce') or 0
+        p_std = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.'), errors='coerce') or 0
+        p_opt = pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.'), errors='coerce') or 0
+        ref_buy = p_std if view_mode == "Standard" else p_opt
+        curr_price = info["price"]
+        val_czk = ks * curr_price * rate
+        hist = info["history"]
+        ref_price = hist.iloc[-(target_days + 1)] if (not hist.empty and len(hist) > target_days) else ref_buy
+        total_val += val_czk
+        total_ref += (ks * ref_price * rate)
+        
+        div_ks = info["div"]
+        
+        processed.append({**r, "TC": curr_price, "RefPrice": ref_price, "Hodnota CZK": val_czk, 
+            "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
+            "Div_ks": div_ks, "Div_total": ks * div_ks * rate, **earn_data.get(t, {"earn_dt": "-", "days_to": "-"}), "History": hist})
+    df_p = pd.DataFrame(processed)
 
     st.sidebar.divider()
-    w_val = st.sidebar.slider("Váha: Valuace", 0.5, 3.0, 1.0)
-    w_prof = st.sidebar.slider("Váha: Rentabilita", 0.5, 3.0, 1.0)
-    w_growth = st.sidebar.slider("Váha: Růst", 0.5, 3.0, 1.0)
-    w_risk = st.sidebar.slider("Váha: Riziko", 0.5, 3.0, 1.0)
+    st.sidebar.metric("Celkem CZK", f"{format_cz(total_val, 0)} CZK")
+    diff = total_val - total_ref
+    st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
-    mapping_keys = ["P/E", "P/S", "P/B", "P/FCF", "H-Marže", "Č-Marže", "ROE", "Tržby y/y", "Zisk y/y", "Dluh D/E", "Div. výnos", "Potenciál"]
-    pct_cols = ["Výkonnost", "H-Marže", "Č-Marže", "ROE", "Tržby y/y", "Zisk y/y", "Dluh D/E", "Div. výnos", "Potenciál"]
-    m_rows = []
+    if page == "💰 Přehled":
+        # PŘIDÁNA HLAVIČKA "KS"
+        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Cena</th><th class='num'>CZK</th><th class='num'>Zisk %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
+        for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
+            tc_cls = "pos-text" if r["TC"] >= r["RefPrice"] else "neg-text"
+            z_cls = "pos-text" if r["Zisk %"] >= 0 else "neg-text"
+            w_cls = " class='warn-cell'" if str(r['days_to']).isdigit() and int(r['days_to']) <= 14 else ""
+            # PŘIDÁN SLOUPEC S POČTEM KUSŮ (r['Ks'])
+            html += f"<tr><td><b>{r['Název']}</b></td><td class='num'>{r['Ks']:.0f}</td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td><td class='num {z_cls}'>{r['Zisk %']:.2f}%</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['earn_dt']}</td><td{w_cls}>{r['days_to']}</td></tr>"
+        st.write(html + "</tbody></table>", unsafe_allow_html=True)
 
-    for item in filtered_data:
-        inf = item["inf"]; t = item["t"]; name = item["name"]; hi = item["history"]
-        def sg(k, mult=1.0):
-            v = inf.get(k); return float(v) * mult if v is not None and str(v) != "None" else 0.0
-        
-        d_yield = sg("dividendYield")
-        if d_yield < 0.2 and d_yield > 0: d_yield *= 100 
+    elif page == "🖼️ Grafika":
+        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Obor (Sektor)', 'Název'], values='Hodnota CZK')
+        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
+        fig.update_layout(height=800)
+        st.plotly_chart(fig, use_container_width=True)
 
-        aktuarni_cena = sg("currentPrice")
-        vypoctena_zmena = 0.0
+    elif page == "📈 Výkonnost":
+        idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
+        sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
+        idx_h = m_data[idx_t]["history"].tail(target_days + 1)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
+        port_h = pd.Series(0.0, index=idx_h.index)
+        for _, r in df_p.iterrows():
+            h = r["History"].reindex(idx_h.index, method='ffill')
+            if not h.empty:
+                port_h += (h/h.iloc[0]-1)*100 * (r["Hodnota CZK"]/total_val)
+                if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
+        fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
+        st.plotly_chart(fig, use_container_width=True)
 
-        if obdobi == "1 Den":
-            vypoctena_zmena = ((aktuarni_cena / sg("previousClose", 1.0)) - 1) * 100 if sg("previousClose") else 0.0
-        elif obdobi == "1 Týden" and len(hi) >= 5:
-            vypoctena_zmena = ((aktuarni_cena / hi['Close'].iloc[-5]) - 1) * 100 if hi['Close'].iloc[-5] > 0 else 0.0
-        elif obdobi == "1 Měsíc" and len(hi) >= 20:
-            vypoctena_zmena = ((aktuarni_cena / hi['Close'].iloc[-20]) - 1) * 100 if hi['Close'].iloc[-20] > 0 else 0.0
-        elif obdobi == "Od pořízení (Standard)":
-            vypoctena_zmena = ((aktuarni_cena / item["cena_std"]) - 1) * 100 if item["cena_std"] > 0 else 0.0
-        elif obdobi == "Od pořízení (s opcemi)":
-            vypoctena_zmena = ((aktuarni_cena / item["cena_opc"]) - 1) * 100 if item["cena_opc"] > 0 else 0.0
-
-        raw_vals = {
-            "Cena": aktuarni_cena, 
-            "Výkonnost": vypoctena_zmena,
-            "P/E": sg("trailingPE") or sg("forwardPE"), "P/S": sg("priceToSalesTrailing12Months"), 
-            "P/B": sg("priceToBook"), "P/FCF": sg("marketCap")/sg("freeCashflow") if sg("freeCashflow") else 0,
-            "H-Marže": sg("grossMargins", 100), "Č-Marže": sg("profitMargins", 100), "ROE": sg("returnOnEquity", 100), 
-            "Tržby y/y": sg("revenueGrowth", 100), "Zisk y/y": sg("earningsGrowth", 100), "Dluh D/E": sg("debtToEquity"), 
-            "Div. výnos": d_yield, "Potenciál": ((sg("targetMeanPrice")/sg("currentPrice", 1.0))-1)*100 if sg("targetMeanPrice") else 0
-        }
-
-        total = 0
-        row_p = {"Titul": f"   └ body ({t})", "Type": "Points"}
-        p_map = {"P/E":p_pe,"P/S":p_ps,"P/B":p_pb,"P/FCF":p_pfcf,"H-Marže":p_gm,"Č-Marže":p_nm,"ROE":p_roe,"Tržby y/y":p_rev,"Zisk y/y":p_eps,"Dluh D/E":p_deb,"Div. výnos":p_div,"Potenciál":p_pot}
-        w_map = {"v":w_val,"p":w_prof,"g":w_growth,"r":w_risk}
-
-        for k in mapping_keys:
-            vw = w_map["v"] if k in ["P/E","P/S","P/B","P/FCF"] else (w_map["p"] if "Marže" in k or "ROE" in k else (w_map["g"] if k in ["Tržby y/y","Zisk y/y","Div. výnos","Potenciál"] else w_map["r"]))
-            b = get_b(raw_vals[k], p_map[k]) * vw
-            total += b
-            row_p[k] = str(int(round(b)))
-
-        row_v = {"Titul": name, "Type": "Value", "_perf": raw_vals["Výkonnost"], "Score": int(total)}
-        for k in mapping_keys:
-            row_v[k] = fmt(raw_vals[k], 1, k in pct_cols)
-            row_v[f"_raw_{k}"] = raw_vals[k]
-        
-        row_v["Cena"] = fmt(raw_vals["Cena"], 2)
-        row_v["Výkonnost"] = fmt(raw_vals["Výkonnost"], 1, True)
-        m_rows.append(row_v)
-        if zobrazit_body: m_rows.append(row_p)
-
-    df = pd.DataFrame(m_rows)
-    if not df.empty:
-        def style_matrix(r):
-            s = [''] * len(r)
-            if r.get("Type") == "Points": return ['color: #888; font-style: italic; background-color: #f8f9fa'] * len(r)
-            for i, col in enumerate(r.index):
-                if col == "Cena": 
-                    s[i] = "font-weight: bold;"
-                if col == "Výkonnost":
-                    s[i] = f"color: {'#1b5e20' if r['_perf']>0 else '#b71c1c'}; font-weight: bold; background-color: {'#e8f5e9' if r['_perf']>0 else '#ffebee'}"
-                
-                if col == "Score":
-                    sc = r.get("Score", 0)
-                    if sc > 100: s[i] = 'background-color: #c8e6c9; color: #1b5e20; font-weight: bold;'
-                    elif sc > 50: s[i] = 'background-color: #fff9c4; color: #f57f17; font-weight: bold;'
-                    else: s[i] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold;'
-                    
-                val = r.get(f"_raw_{col}", 0)
-                if col == "P/E" and val > 25: s[i] = 'background-color: #ffebee'
-                if col == "Dluh D/E" and val > 120: s[i] = 'background-color: #ffcdd2'
-            return s
-        
-        cols_to_hide = [c for c in df.columns if c.startswith("_raw_") or c.startswith("_")] + ["Type"]
-        st.dataframe(df.style.apply(style_matrix, axis=1),
-                    use_container_width=True, hide_index=True, height=800,
-                    column_order=["Titul", "Cena", "Výkonnost"] + mapping_keys + ["Score"],
-                    column_config={c: None for c in cols_to_hide})
-
-# [Zbytek stránek IV a Kalendář zůstává beze změny, funkční podle předchozí verze]
-else:
-    st.info("Přepněte na Scoring Matrix pro zobrazení hlavní tabulky.")
+    elif page == "⚙️ Ostatní":
+        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='Hodnota CZK')
+        st.plotly_chart(fig, use_container_width=True)
+except Exception as e: st.error(f"Kritická chyba: {e}")
