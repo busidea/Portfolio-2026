@@ -59,10 +59,28 @@ ODKAZ_NA_TABULKU = "https://docs.google.com/spreadsheets/d/1q90ZZ4EjYCqyrReOgm6j
 def nacti_seznam(odkaz):
     try:
         csv_url = odkaz.replace('/edit?usp=sharing', '/export?format=csv')
-        df = pd.read_csv(csv_url)
+        
+        # DETEKCE SEPARÁTORU: Nejprve zkusíme středník, který vaše tabulka očividně používá
+        df = pd.read_csv(csv_url, sep=";")
+        
+        # Pokud by středník selhal a načetl se jen 1 sloupec, zkusíme standardní čárku
+        if len(df.columns) <= 1:
+            df = pd.read_csv(csv_url, sep=",")
+            
         # Očištění názvů sloupců od neviditelných mezer na začátku/konci
         df.columns = [c.strip() for c in df.columns]
-        df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
+        
+        # Dynamické nalezení sloupce s Tickerem (v datech je spojený s Názvem "NázevTicker" nebo samostatně)
+        col_ticker = next((c for c in df.columns if "ticker" in c.lower()), None)
+        if col_ticker:
+            df['Ticker'] = df[col_ticker].astype(str).str.upper().str.strip()
+        elif 'NázevTicker' in df.columns:
+            # Pojistka: pokud jsou sloupce úplně slepené v záhlaví
+            df['Ticker'] = df['NázevTicker'].astype(str).str.upper().str.strip()
+        else:
+            # Poslední záchrana, pokud se sloupec jmenuje jakkoliv jinak
+            df['Ticker'] = df.iloc[:, 1].astype(str).str.upper().str.strip() if len(df.columns) > 1 else df.iloc[:, 0].astype(str).str.upper().str.strip()
+            
         return df
     except: return pd.DataFrame()
 
@@ -71,19 +89,24 @@ def fetch_all_data(df_input):
     res = []
     nakupni_data = {}
     
-    # Hledání sloupců pomocí filtru, kdyby se jmenovaly trochu jinak
-    col_std = next((c for c in df_input.columns if "průměrná nákupní" in c.lower()), "Průměrná nákupní cena")
-    col_opc = next((c for c in df_input.columns if "včetně opcí" in c.lower()), "Nákupní cena včetně opcí")
-    col_kat = next((c for c in df_input.columns if "kategorie" in c.lower()), "Kategorie")
-    col_earn = next((c for c in df_input.columns if "earnings" in c.lower()), "Earnings Day")
+    if df_input.empty: return res
+    
+    # Inteligentní vyhledání správných sloupců bez ohledu na překlepy či diakritiku
+    col_std = next((c for c in df_input.columns if "průměrná nákupní" in c.lower() or "prumerna" in c.lower()), "Průměrná nákupní cena")
+    col_opc = next((c for c in df_input.columns if "včetně opcí" in c.lower() or "vcetne" in c.lower()), "Nákupní cena včetně opcí")
+    col_kat = next((c for c in df_input.columns if "kategorie" in c.lower() or "charakter" in c.lower() or "obor" in c.lower()), "Kategorie")
+    col_earn = next((c for c in df_input.columns if "earnings" in c.lower() or "kalendář" in c.lower()), "Earnings Day")
 
     for row in df_input.to_dict('records'):
-        t = str(row.get('Ticker', '')).strip().upper()
-        if t and t not in ["NAN", "NONE", "-"]:
+        t = str(row.get('Ticker', row.get('Ticker', ''))).strip().upper()
+        if t and t not in ["NAN", "NONE", "-", "NÁZEVTICKER"]:
+            # Vyčištění případů, kdy by byl v buňce název i ticker dohromady
+            if " " in t: t = t.split()[-1] 
+            
             nakupni_data[t] = {
                 "cena_std": safe_float(row.get(col_std)),
                 "cena_opc": safe_float(row.get(col_opc)),
-                "kat": str(row.get(col_kat, 'Vše')),
+                "kat": str(row.get(col_kat, 'Portfolio')), # Výchozí je Portfolio, jak máte nastaveno
                 "earn": row.get(col_earn)
             }
 
@@ -96,7 +119,7 @@ def fetch_all_data(df_input):
                 rsi = 100 - (100 / (1 + (g.iloc[-1]/l.iloc[-1]))) if l.iloc[-1] != 0 else 50
             res.append({
                 "t": t, "inf": inf, "rsi": rsi, "history": hi,
-                "kat": n_data["kat"], 
+                "kat": n_data["kat"] if n_data["kat"] in ["Portfolio", "Sledované"] else "Portfolio", 
                 "earn": n_data["earn"],
                 "cena_std": n_data["cena_std"],
                 "cena_opc": n_data["cena_opc"],
@@ -111,9 +134,6 @@ raw_data = fetch_all_data(df_raw_list)
 # --- DIAGNOSTICKÝ BOX ---
 with st.expander("🔍 DIAGNOSTIKA NAČÍTÁNÍ DAT (Rozklikni pro kontrolu)", expanded=False):
     st.write("**Nalezené sloupce v Google tabulce:**", list(df_raw_list.columns))
-    st.write("**Ukázka prvních 3 řádků z Google tabulky (Surová data):**")
-    if not df_raw_list.empty:
-        st.dataframe(df_raw_list.head(3))
     st.write("**Zpracovaná data pro aplikaci (co vidí Python interně):**")
     diag_rows = [{"Ticker": d["t"], "Načtená Cena Std": d["cena_std"], "Načtená Cena Opc": d["cena_opc"]} for d in raw_data]
     st.dataframe(pd.DataFrame(diag_rows))
