@@ -64,7 +64,6 @@ def nacti_seznam(odkaz):
 @st.cache_data(ttl=3600)
 def fetch_all_data(df_input):
     res = []
-    # Vytvoříme index podle Tickeru pro rychlé vyhledávání nákupních cen
     nakupni_data = {}
     for row in df_input.to_dict('records'):
         t = str(row.get('Ticker', '')).strip().upper()
@@ -79,13 +78,13 @@ def fetch_all_data(df_input):
     for t, n_data in nakupni_data.items():
         if not t or t in ["-", "nan", "NAN"]: continue
         try:
-            tk = yf.Ticker(t); inf = tk.info; hi = tk.history(period="1mo")
+            tk = yf.Ticker(t); inf = tk.info; hi = tk.history(period="3mo")
             rsi = 50
             if len(hi) > 14:
                 d = hi['Close'].diff(); g = d.where(d > 0, 0).rolling(14).mean(); l = -d.where(d < 0, 0).rolling(14).mean()
                 rsi = 100 - (100 / (1 + (g.iloc[-1]/l.iloc[-1]))) if l.iloc[-1] != 0 else 50
             res.append({
-                "t": t, "inf": inf, "rsi": rsi, 
+                "t": t, "inf": inf, "rsi": rsi, "history": hi,
                 "kat": n_data["kat"], 
                 "earn": n_data["earn"],
                 "cena_std": n_data["cena_std"],
@@ -106,9 +105,9 @@ st.sidebar.divider()
 filtr_kat = st.sidebar.selectbox("Filtr kategorií:", ["Portfolio", "Sledované", "Vše"], index=0)
 filtered_data = [d for d in raw_data if filtr_kat == "Vše" or d["kat"] == filtr_kat]
 
-# Nový ovladač pro metodu výpočtu zisku na základě tvé Google tabulky
-st.sidebar.markdown("### **💰 Nastavení nákupní ceny**")
-metoda_ceny = st.sidebar.radio("Zisk počítat z:", ["Standardní nákupní cena", "Nákupní cena včetně opcí"])
+# Elegantní sjednocený ovladač období, jak jsi navrhl
+st.sidebar.markdown("### **⏱️ Období / Výkonnost**")
+obdobi = st.sidebar.selectbox("Zobrazit změnu za:", ["1 Den", "1 Týden", "1 Měsíc", "Od pořízení (Standard)", "Od pořízení (s opcemi)"], index=0)
 
 # --- 5. LOGIKA STRÁNEK ---
 
@@ -156,26 +155,35 @@ if stranka == "Scoring Matrix":
     w_risk = st.sidebar.slider("Váha: Riziko", 0.5, 3.0, 1.0)
 
     mapping_keys = ["P/E", "P/S", "P/B", "P/FCF", "H-Marže", "Č-Marže", "ROE", "Tržby y/y", "Zisk y/y", "Dluh D/E", "Div. výnos", "Potenciál"]
-    pct_cols = ["Změna", "Zisk % (Od nákupu)", "H-Marže", "Č-Marže", "ROE", "Tržby y/y", "Zisk y/y", "Dluh D/E", "Div. výnos", "Potenciál"]
+    pct_cols = ["Výkonnost", "H-Marže", "Č-Marže", "ROE", "Tržby y/y", "Zisk y/y", "Dluh D/E", "Div. výnos", "Potenciál"]
     m_rows = []
 
     for item in filtered_data:
-        inf = item["inf"]; t = item["t"]; name = item["name"]
+        inf = item["inf"]; t = item["t"]; name = item["name"]; hi = item["history"]
         def sg(k, mult=1.0):
             v = inf.get(k); return float(v) * mult if v is not None and str(v) != "None" else 0.0
         
         d_yield = sg("dividendYield")
         if d_yield < 0.2 and d_yield > 0: d_yield *= 100 
 
-        # Výpočet zisku od nákupu podle zvolené ceny
-        nakupni_cena = item["cena_opc"] if metoda_ceny == "Nákupní cena včetně opcí" else item["cena_std"]
+        # Logika výpočtu sloupce Výkonnost na základě vybraného období
         aktuarni_cena = sg("currentPrice")
-        zisk_od_nakupu = ((aktuarni_cena / nakupni_cena) - 1) * 100 if nakupni_cena > 0 else 0.0
+        vypoctena_zmena = 0.0
+
+        if obdobi == "1 Den":
+            vypoctena_zmena = ((aktuarni_cena / sg("previousClose", 1.0)) - 1) * 100 if sg("previousClose") else 0.0
+        elif obdobi == "1 Týden" and len(hi) >= 5:
+            vypoctena_zmena = ((aktuarni_cena / hi['Close'].iloc[-5]) - 1) * 100 if hi['Close'].iloc[-5] > 0 else 0.0
+        elif obdobi == "1 Měsíc" and len(hi) >= 20:
+            vypoctena_zmena = ((aktuarni_cena / hi['Close'].iloc[-20]) - 1) * 100 if hi['Close'].iloc[-20] > 0 else 0.0
+        elif obdobi == "Od pořízení (Standard)":
+            vypoctena_zmena = ((aktuarni_cena / item["cena_std"]) - 1) * 100 if item["cena_std"] > 0 else 0.0
+        elif obdobi == "Od pořízení (s opcemi)":
+            vypoctena_zmena = ((aktuarni_cena / item["cena_opc"]) - 1) * 100 if item["cena_opc"] > 0 else 0.0
 
         raw_vals = {
             "Cena": aktuarni_cena, 
-            "Změna": ((aktuarni_cena/sg("previousClose", 1.0))-1)*100 if sg("previousClose") else 0,
-            "Zisk % (Od nákupu)": zisk_od_nakupu,
+            "Výkonnost": vypoctena_zmena,
             "P/E": sg("trailingPE") or sg("forwardPE"), "P/S": sg("priceToSalesTrailing12Months"), 
             "P/B": sg("priceToBook"), "P/FCF": sg("marketCap")/sg("freeCashflow") if sg("freeCashflow") else 0,
             "H-Marže": sg("grossMargins", 100), "Č-Marže": sg("profitMargins", 100), "ROE": sg("returnOnEquity", 100), 
@@ -194,15 +202,13 @@ if stranka == "Scoring Matrix":
             total += b
             row_p[k] = str(int(round(b)))
 
-        row_v = {"Titul": name, "Type": "Value", "_change": raw_vals["Změna"], "_total_gain": raw_vals["Zisk % (Od nákupu)"], "Score": int(total)}
+        row_v = {"Titul": name, "Type": "Value", "_perf": raw_vals["Výkonnost"], "Score": int(total)}
         for k in mapping_keys:
             row_v[k] = fmt(raw_vals[k], 1, k in pct_cols)
             row_v[f"_raw_{k}"] = raw_vals[k]
         
         row_v["Cena"] = fmt(raw_vals["Cena"], 2)
-        row_v["Změna"] = fmt(raw_vals["Změna"], 1, True)
-        row_v["Zisk % (Od nákupu)"] = fmt(raw_vals["Zisk % (Od nákupu)"], 1, True)
-        
+        row_v["Výkonnost"] = fmt(raw_vals["Výkonnost"], 1, True)
         m_rows.append(row_v)
         if zobrazit_body: m_rows.append(row_p)
 
@@ -212,10 +218,10 @@ if stranka == "Scoring Matrix":
             s = [''] * len(r)
             if r.get("Type") == "Points": return ['color: #888; font-style: italic; background-color: #f8f9fa'] * len(r)
             for i, col in enumerate(r.index):
-                if col in ["Cena", "Změna"]: 
-                    s[i] = f"color: {'#1b5e20' if r['_change']>0 else '#b71c1c'}; font-weight: bold"
-                if col == "Zisk % (Od nákupu)":
-                    s[i] = f"color: {'#1b5e20' if r['_total_gain']>0 else '#b71c1c'}; font-weight: bold; background-color: {'#e8f5e9' if r['_total_gain']>0 else '#ffebee'}"
+                if col == "Cena": 
+                    s[i] = "font-weight: bold;"
+                if col == "Výkonnost":
+                    s[i] = f"color: {'#1b5e20' if r['_perf']>0 else '#b71c1c'}; font-weight: bold; background-color: {'#e8f5e9' if r['_perf']>0 else '#ffebee'}"
                 val = r.get(f"_raw_{col}", 0)
                 if col == "P/E" and val > 25: s[i] = 'background-color: #ffebee'
                 if col == "Dluh D/E" and val > 120: s[i] = 'background-color: #ffcdd2'
@@ -224,7 +230,7 @@ if stranka == "Scoring Matrix":
         cols_to_hide = [c for c in df.columns if c.startswith("_raw_") or c.startswith("_")] + ["Type"]
         st.dataframe(df.style.apply(style_matrix, axis=1).background_gradient(subset=["Score"], cmap="RdYlGn", vmin=0, vmax=150),
                     use_container_width=True, hide_index=True, height=800,
-                    column_order=["Titul", "Cena", "Změna", "Zisk % (Od nákupu)"] + mapping_keys + ["Score"],
+                    column_order=["Titul", "Cena", "Výkonnost"] + mapping_keys + ["Score"],
                     column_config={c: None for c in cols_to_hide})
 
 elif stranka == "Vnitřní hodnota (IV)":
