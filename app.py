@@ -62,61 +62,7 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# --- 2. STYLY A JAVASCRIPT PRO ŘAZENÍ ---
-st.markdown("""
-<style>
-    .portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 8px; text-align: right; cursor: pointer; user-select: none; }
-    .portfolio-table th:hover { background-color: #333333; }
-    .portfolio-table td { padding: 7px; border-bottom: 1px solid #eee; }
-    .num { text-align: right; font-family: monospace; }
-    .pos-text { color: #2e7d32; font-weight: bold; }
-    .neg-text { color: #d32f2f; font-weight: bold; }
-    .warn-cell { background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center; }
-</style>
-
-<script>
-function sortTable(tableId, colIdx) {
-    const table = document.getElementById(tableId);
-    if (!table) return;
-    const tbody = table.querySelector('tbody');
-    const rows = Array.from(tbody.querySelectorAll('tr'));
-    
-    // Zjištění aktuálního směru řazení
-    const th = table.querySelectorAll('th')[colIdx];
-    const isAsc = th.getAttribute('data-order') === 'asc';
-    const direction = isAsc ? -1 : 1;
-    th.setAttribute('data-order', isAsc ? 'desc' : 'asc');
-
-    rows.sort((rowA, rowB) => {
-        let cellA = rowA.children[colIdx].innerText.trim();
-        let cellB = rowB.children[colIdx].innerText.trim();
-
-        // Pomocná funkce pro vyčištění čísel (odstranění mezer, převod % a CZK, nahrazení čárky tečkou)
-        function cleanNum(txt) {
-            if (txt === '-' || txt === '') return -999999999;
-            let clean = txt.replace(/[^0-9,-]/g, '').replace(',', '.');
-            let val = parseFloat(clean);
-            return isNaN(val) ? txt : val;
-        }
-
-        let valA = cleanNum(cellA);
-        let valB = cleanNum(cleanB);
-
-        if (typeof valA === 'number' && typeof valB === 'number') {
-            return (valA - valB) * direction;
-        } else {
-            return valA.toString().localeCompare(valB.toString()) * direction;
-        }
-    });
-
-    // Znovu vložení seřazených řádků
-    rows.forEach(row => tbody.appendChild(row));
-}
-</script>
-""", unsafe_allow_html=True)
-
-# --- 3. LOGIKA ---
+# --- 2. LOGIKA ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 try:
@@ -157,9 +103,14 @@ try:
         
         div_ks = info["div"]
         
-        processed.append({**r, "TC": curr_price, "RefPrice": ref_price, "Hodnota CZK": val_czk, 
+        processed.append({
+            "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
             "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
-            "Div_ks": div_ks, "Div_total": ks * div_ks * rate, **earn_data.get(t, {"earn_dt": "-", "days_to": "-"}), "History": hist})
+            "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
+            "Earnings": earn_data.get(t, {"earn_dt": "-"})["earn_dt"], 
+            "Dní": earn_data.get(t, {"days_to": "-"})["days_to"], 
+            "History": hist, "RefPrice": ref_price
+        })
     df_p = pd.DataFrame(processed)
 
     st.sidebar.divider()
@@ -168,32 +119,45 @@ try:
     st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     if page == "💰 Přehled":
-        # PŘIDÁNA ID TABULKY A FUNKCE onclick DO NÁZVŮ SLOUPCŮ
-        html = """<table class='portfolio-table' id='p-table'>
-        <thead>
-            <tr>
-                <th onclick='sortTable("p-table", 0)' style='text-align: left;'>Název</th>
-                <th onclick='sortTable("p-table", 1)'>KS</th>
-                <th onclick='sortTable("p-table", 2)'>Cena</th>
-                <th onclick='sortTable("p-table", 3)'>CZK</th>
-                <th onclick='sortTable("p-table", 4)'>Zisk %</th>
-                <th onclick='sortTable("p-table", 5)'>Div/ks</th>
-                <th onclick='sortTable("p-table", 6)'>Div celkem</th>
-                <th onclick='sortTable("p-table", 7)'>Earnings</th>
-                <th onclick='sortTable("p-table", 8)'>Dní</th>
-            </tr>
-        </thead>
-        <tbody>"""
-        
-        for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
-            tc_cls = "pos-text" if r["TC"] >= r["RefPrice"] else "neg-text"
-            z_cls = "pos-text" if r["Zisk %"] >= 0 else "neg-text"
-            w_cls = " class='warn-cell'" if str(r['days_to']).isdigit() and int(r['days_to']) <= 14 else ""
-            html += f"<tr><td><b>{r['Název']}</b></td><td class='num'>{r['Ks']:.0f}</td><td class='num {tc_cls}'>{format_cz(r['TC'])}</td><td class='num'><b>{format_cz(r['Hodnota CZK'], 0)}</b></td><td class='num {z_cls}'>{r['Zisk %']:.2f}%</td><td class='num'>{format_cz(r['Div_ks'])}</td><td class='num'>{format_cz(r['Div_total'], 0)}</td><td>{r['earn_dt']}</td><td{w_cls}>{r['days_to']}</td></tr>"
-        st.write(html + "</tbody></table>", unsafe_allow_html=True)
+        # Příprava čisté tabulky pro zobrazení
+        df_show = df_p[["Název", "KS", "Cena", "CZK", "Zisk %", "Div/ks", "Div celkem", "Earnings", "Dní"]].copy()
+        df_show = df_show.sort_values("CZK", ascending=False)
+
+        # Funkce pro barvení textu Ceny a Zisku
+        def style_rows(row):
+            styles = [''] * len(row)
+            # Porovnání Ceny vůči referenční ceně přes původní dataframe df_p
+            orig_row = df_p[df_p['Název'] == row['Název']].iloc[0]
+            
+            # Cena barva
+            styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
+            # Zisk % barva
+            styles[4] = 'color: #2e7d32; font-weight: bold;' if row['Zisk %'] >= 0 else 'color: #d32f2f; font-weight: bold;'
+            
+            # Earnings blížící se dny (červené podbarvení buňky Dní)
+            try:
+                days = int(row['Dní'])
+                if days <= 14:
+                    styles[8] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
+            except: pass
+            return styles
+
+        # Aplikace formátování a stylů přes Pandas Styler
+        styled_df = df_show.style.apply(style_rows, axis=1)\
+            .format({
+                "KS": "{:,.0f}",
+                "Cena": lambda x: format_cz(x),
+                "CZK": lambda x: format_cz(x, 0),
+                "Zisk %": "{:,.2f}%",
+                "Div/ks": lambda x: format_cz(x),
+                "Div celkem": lambda x: format_cz(x, 0)
+            })
+
+        # Zobrazení tabulky s plnou interaktivitou (včetně nativního řazení)
+        st.dataframe(styled_df, use_container_width=True, hide_index=True, height=600)
 
     elif page == "🖼️ Grafika":
-        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Obor (Sektor)', 'Název'], values='Hodnota CZK')
+        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='CZK')
         fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
         fig.update_layout(height=800)
         st.plotly_chart(fig, use_container_width=True)
@@ -208,12 +172,12 @@ try:
         for _, r in df_p.iterrows():
             h = r["History"].reindex(idx_h.index, method='ffill')
             if not h.empty:
-                port_h += (h/h.iloc[0]-1)*100 * (r["Hodnota CZK"]/total_val)
+                port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
                 if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
         fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
         st.plotly_chart(fig, use_container_width=True)
 
     elif page == "⚙️ Ostatní":
-        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='Hodnota CZK')
+        fig = px.sunburst(df_p, path=['Název'], values='CZK')
         st.plotly_chart(fig, use_container_width=True)
 except Exception as e: st.error(f"Kritická chyba: {e}")
