@@ -62,17 +62,58 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# --- 2. STYLY ---
+# --- 2. STYLY A JAVASCRIPT PRO ŘAZENÍ ---
 st.markdown("""
 <style>
     .portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 8px; text-align: right; }
+    .portfolio-table th { background-color: #1e1e1e; color: #ffffff; padding: 8px; text-align: right; cursor: pointer; user-select: none; }
+    .portfolio-table th:hover { background-color: #333333; }
     .portfolio-table td { padding: 7px; border-bottom: 1px solid #eee; }
     .num { text-align: right; font-family: monospace; }
     .pos-text { color: #2e7d32; font-weight: bold; }
     .neg-text { color: #d32f2f; font-weight: bold; }
     .warn-cell { background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center; }
 </style>
+
+<script>
+function sortTable(tableId, colIdx) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    
+    // Zjištění aktuálního směru řazení
+    const th = table.querySelectorAll('th')[colIdx];
+    const isAsc = th.getAttribute('data-order') === 'asc';
+    const direction = isAsc ? -1 : 1;
+    th.setAttribute('data-order', isAsc ? 'desc' : 'asc');
+
+    rows.sort((rowA, rowB) => {
+        let cellA = rowA.children[colIdx].innerText.trim();
+        let cellB = rowB.children[colIdx].innerText.trim();
+
+        // Pomocná funkce pro vyčištění čísel (odstranění mezer, převod % a CZK, nahrazení čárky tečkou)
+        function cleanNum(txt) {
+            if (txt === '-' || txt === '') return -999999999;
+            let clean = txt.replace(/[^0-9,-]/g, '').replace(',', '.');
+            let val = parseFloat(clean);
+            return isNaN(val) ? txt : val;
+        }
+
+        let valA = cleanNum(cellA);
+        let valB = cleanNum(cleanB);
+
+        if (typeof valA === 'number' && typeof valB === 'number') {
+            return (valA - valB) * direction;
+        } else {
+            return valA.toString().localeCompare(valB.toString()) * direction;
+        }
+    });
+
+    // Znovu vložení seřazených řádků
+    rows.forEach(row => tbody.appendChild(row));
+}
+</script>
 """, unsafe_allow_html=True)
 
 # --- 3. LOGIKA ---
@@ -87,11 +128,7 @@ try:
     st.sidebar.title("💎 MENU")
     page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
-    
-    # NOVÝ OVLADAČ ROZŠÍŘENÝ O VOLBU "Od nákupu"
     time_frame = st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den", "Od nákupu"], index=1)
-    
-    # Pojistka pro grafika: pokud je vybráno "Od nákupu", graf počítá s 1 rokem (252 dní)
     graph_days = 252 if time_frame == "Od nákupu" else {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
 
     processed = []
@@ -104,13 +141,11 @@ try:
         p_std = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.'), errors='coerce') or 0
         p_opt = pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.'), errors='coerce') or 0
         
-        # Zvolená nákupní referenční cena (Standard vs Opce)
         ref_buy = p_std if view_mode == "Standard" else p_opt
         curr_price = info["price"]
         val_czk = ks * curr_price * rate
         hist = info["history"]
         
-        # CHYTRÁ VÝHYBKA PRO VÝPOČET REFERENČNÍ CENY
         if time_frame == "Od nákupu":
             ref_price = ref_buy
         else:
@@ -133,7 +168,23 @@ try:
     st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     if page == "💰 Přehled":
-        html = "<table class='portfolio-table'><thead><tr><th>Název</th><th class='num'>KS</th><th class='num'>Cena</th><th class='num'>CZK</th><th class='num'>Zisk %</th><th class='num'>Div/ks</th><th class='num'>Div celkem</th><th>Earnings</th><th>Dní</th></tr></thead><tbody>"
+        # PŘIDÁNA ID TABULKY A FUNKCE onclick DO NÁZVŮ SLOUPCŮ
+        html = """<table class='portfolio-table' id='p-table'>
+        <thead>
+            <tr>
+                <th onclick='sortTable("p-table", 0)' style='text-align: left;'>Název</th>
+                <th onclick='sortTable("p-table", 1)'>KS</th>
+                <th onclick='sortTable("p-table", 2)'>Cena</th>
+                <th onclick='sortTable("p-table", 3)'>CZK</th>
+                <th onclick='sortTable("p-table", 4)'>Zisk %</th>
+                <th onclick='sortTable("p-table", 5)'>Div/ks</th>
+                <th onclick='sortTable("p-table", 6)'>Div celkem</th>
+                <th onclick='sortTable("p-table", 7)'>Earnings</th>
+                <th onclick='sortTable("p-table", 8)'>Dní</th>
+            </tr>
+        </thead>
+        <tbody>"""
+        
         for _, r in df_p.sort_values("Hodnota CZK", ascending=False).iterrows():
             tc_cls = "pos-text" if r["TC"] >= r["RefPrice"] else "neg-text"
             z_cls = "pos-text" if r["Zisk %"] >= 0 else "neg-text"
@@ -150,8 +201,6 @@ try:
     elif page == "📈 Výkonnost":
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
         sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
-        
-        # Graf pracuje s bezpečnou proměnnou graph_days (při "Od nákupu" zobrazí 1 rok)
         idx_h = m_data[idx_t]["history"].tail(graph_days + 1)
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
