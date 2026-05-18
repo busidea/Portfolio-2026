@@ -6,6 +6,7 @@ from datetime import datetime, date
 # --- 1. KONFIGURACE A STYL ---
 st.set_page_config(page_title="Investiční Terminál", layout="wide")
 
+# Správné odsazení (padding-top), aby záhlaví tabulek nezajížděla pod horní lištu
 st.markdown("""
     <style>
     .block-container { padding-top: 3.5rem; padding-bottom: 0rem; }
@@ -29,18 +30,13 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-def safe_date_diff(earn_date, today):
-    if earn_date is None or earn_date == "-":
+def safe_date_diff(earn_val, today):
+    if pd.isna(earn_val) or str(earn_val).strip() in ["", "-", "nan", "None"]:
         return 999
     try:
-        # Převedení datetime na date pro korektní odečet dnů
-        if isinstance(earn_date, datetime):
-            earn_date = earn_date.date()
-        elif isinstance(earn_date, str):
-            earn_date = pd.to_datetime(earn_date).date()
-        return (earn_date - today).days
-    except: 
-        return 999
+        dt = pd.to_datetime(earn_val, dayfirst=True).date()
+        return (dt - today).days
+    except: return 999
 
 def get_b(val, pasma):
     if val is None or val == 0: return 0
@@ -51,7 +47,7 @@ def get_b(val, pasma):
 # --- 3. NAČTENÍ DAT ---
 ODKAZ_NA_TABULKU = "https://docs.google.com/spreadsheets/d/1q90ZZ4EjYCqyrReOgm6j_nmJlXEs2aaU6YWHAw7aoZg/edit?usp=sharing"
 
-@st.cache_data(ttl=300) # Seznam tickerů kontrolujeme každých 5 minut
+@st.cache_data(ttl=300)
 def nacti_seznam(odkaz):
     try:
         csv_url = odkaz.replace('/edit?usp=sharing', '/export?format=csv')
@@ -61,22 +57,7 @@ def nacti_seznam(odkaz):
         return df
     except: return pd.DataFrame()
 
-# SPECIÁLNÍ FUNKCE PRO EARNINGS S TÝDENNÍ CACHE (ttl = 7 dní)
-@st.cache_data(ttl=604800)
-def fetch_earnings_date(ticker_str):
-    try:
-        tk = yf.Ticker(ticker_str)
-        cal = tk.calendar
-        if cal is not None and 'Earnings Date' in cal:
-            dates = cal['Earnings Date']
-            if isinstance(dates, list) and len(dates) > 0:
-                return dates[0]
-            return dates
-    except:
-        pass
-    return "-"
-
-@st.cache_data(ttl=3600) # Hlavní data o cenách a maržích stahujeme každou hodinu
+@st.cache_data(ttl=3600)
 def fetch_all_data(df_input):
     res = []
     for row in df_input.to_dict('records'):
@@ -88,14 +69,10 @@ def fetch_all_data(df_input):
             if len(hi) > 14:
                 d = hi['Close'].diff(); g = d.where(d > 0, 0).rolling(14).mean(); l = -d.where(d < 0, 0).rolling(14).mean()
                 rsi = 100 - (100 / (1 + (g.iloc[-1]/l.iloc[-1]))) if l.iloc[-1] != 0 else 50
-            
-            # Zde voláme naši týdenní funkci pro Earnings
-            earn_dt = fetch_earnings_date(t)
-
             res.append({
                 "t": t, "inf": inf, "rsi": rsi, 
                 "kat": str(row.get('Kategorie')), 
-                "earn": earn_dt,
+                "earn": row.get('Earnings Day'),
                 "name": inf.get('longName', t)
             })
         except: continue
@@ -127,6 +104,7 @@ if stranka == "Scoring Matrix":
         h_pe, b_pe = [20, 35, 50, 80, 999], [15, 25, 15, 5, -5]
         h_ps, b_ps = [3, 6, 12, 20, 999], [10, 15, 20, 5, -10]
 
+    # Knihovna nápověd pro otazníčky v sidebaru
     napovedy = {
         "P/E": "Poměr ceny a zisku.\n• < 15 optimální (levné)\n• 15–25 akceptovatelné\n• > 25 varovné (drahé)",
         "P/S": "Poměr ceny a tržeb.\n• < 2 optimální\n• 2–5 akceptovatelné\n• > 6 riskantní (přehřáté)",
@@ -321,19 +299,10 @@ else:
 
     c_rows, today = [], date.today()
     for item in filtered_data:
-        inf = item["inf"]; earn_val = item["earn"]
-        days_to = safe_date_diff(earn_val, today)
-        
-        # Formátování zobrazení datumu pro tabulku
-        fmt_earn = "-"
-        if isinstance(earn_val, (datetime, date)):
-            fmt_earn = earn_val.strftime('%d.%m.%Y')
-        elif str(earn_val) != "-":
-            fmt_earn = str(earn_val)
-
+        inf = item["inf"]; days_to = safe_date_diff(item["earn"], today)
         ex_dt = datetime.fromtimestamp(inf.get('exDividendDate')).date() if inf.get('exDividendDate') else None
         c_rows.append({
-            "Titul": item["name"], "Ticker": item["t"], "Earnings": fmt_earn, "Dní do": days_to,
+            "Titul": item["name"], "Ticker": item["t"], "Earnings": item["earn"] if not pd.isna(item["earn"]) else "-", "Dní do": days_to,
             "Dividenda": f"{safe_float(inf.get('dividendRate')):.2f} {inf.get('currency', 'USD')}", "Ex-Date": ex_dt.strftime('%d.%m.%Y') if ex_dt else "-", 
             "Doporučení": inf.get('recommendationKey', '-').replace('_', ' ').title(), "RSI": int(item['rsi']), "_rsi": item["rsi"]
         })
@@ -342,24 +311,15 @@ else:
         def style_calendar(r):
             s = [''] * len(r)
             d_idx = r.index.get_loc("Dní do")
-            
-            # Pokud se nepovedlo datum stáhnout (999), nebudeme políčko barvit
-            if r["Dní do"] == 999:
-                pass
-            elif r["Dní do"] < 0: 
-                s[d_idx] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold'
-            elif r["Dní do"] < 14: 
-                s[d_idx] = 'background-color: #fff9c4; color: #f57f17; font-weight: bold'
-            
+            if r["Dní do"] < 0: s[d_idx] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold'
+            elif r["Dní do"] < 14: s[d_idx] = 'background-color: #fff9c4; color: #f57f17; font-weight: bold'
             rec = str(r["Doporučení"]).lower(); rec_idx = r.index.get_loc("Doporučení")
             if "buy" in rec: s[rec_idx] = 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
             elif "sell" in rec: s[rec_idx] = 'background-color: #ffebee; color: #b71c1c'
-            
             rsi_idx = r.index.get_loc("RSI")
             if r["_rsi"] < 35: s[rsi_idx] = 'background-color: #c8e6c9; color: #1b5e20; font-weight: bold'
             elif r["_rsi"] > 65: s[rsi_idx] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold'
             return s
-            
         st.dataframe(df_c.style.apply(style_calendar, axis=1), 
                     use_container_width=True, hide_index=True, height=850,
-                    column_config={"_rsi": None, "Dní do": st.column_config.NumberColumn("Dní do", format="%d")})
+                    column_config={"_rsi": None})
