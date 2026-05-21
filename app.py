@@ -89,12 +89,10 @@ try:
             raw_val = str(r['Earnings']).strip()
             if raw_val and raw_val != "-":
                 try:
-                    # Podpora pro běžný formát DD.MM.YYYY
                     parsed_date = pd.to_datetime(raw_val, dayfirst=True).date()
                     earn_dt_str = parsed_date.strftime('%d.%m.%Y')
                     days_to = (parsed_date - today).days
                 except:
-                    # Pokud by tam byl textový pozůstatek, vypíšeme ho bez výpočtu dnů
                     earn_dt_str = raw_val
         
         processed.append({
@@ -102,7 +100,8 @@ try:
             "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
-            "History": hist, "RefPrice": ref_price
+            "History": hist, "RefPrice": ref_price,
+            "Měna": str(r["Měna"]).strip() # Předání měny pro graf na stránce Ostatní
         })
     df_p = pd.DataFrame(processed)
 
@@ -121,13 +120,10 @@ try:
             styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
             styles[4] = 'color: #2e7d32; font-weight: bold;' if row['Zisk %'] >= 0 else 'color: #d32f2f; font-weight: bold;'
             
-            # Podbarvování podle dnů (ruční data z tabulky)
             try:
                 days = int(row['Dní'])
-                # 1. Situace: Termín vypršel (je záporný) -> Donucení k aktualizaci
                 if days < 0:
                     styles[8] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
-                # 2. Situace: Výsledky se blíží (10 a méně dní) -> Varování
                 elif days <= 10:
                     styles[8] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
             except: pass
@@ -168,6 +164,8 @@ try:
         st.plotly_chart(fig, use_container_width=True)
 
     elif page == "⚙️ Ostatní":
-        fig = px.sunburst(df_p, path=['Název'], values='CZK')
+        # Opravený hierarchický graf: nejdříve Měna, potom Společnost (Název)
+        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='CZK')
+        fig.update_layout(height=700)
         st.plotly_chart(fig, use_container_width=True)
 except Exception as e: st.error(f"Kritická chyba: {e}")
