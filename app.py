@@ -20,6 +20,7 @@ def get_fx_rates():
 def get_earnings_data(_tickers):
     data = {}
     today = datetime.now().date()
+    FINNHUB_KEY = "d87it1hr01qmhakg0350d87it1hr01qmhakg035g"
     for t in list(_tickers):
         t_str = str(t).strip()
         earn_dt, days_to = "-", "-"
