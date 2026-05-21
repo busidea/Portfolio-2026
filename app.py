@@ -16,11 +16,10 @@ def format_cz(value, decimals=2):
 def get_fx_rates():
     return {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
 
-# @st.cache_data(ttl=604800)
+@st.cache_data(ttl=604800)
 def get_earnings_data(_tickers):
     data = {}
     today = datetime.now().date()
-    FINNHUB_KEY = "d87it1hr01qmhakg0350d87it1hr01qmhakg035g"
     for t in list(_tickers):
         t_str = str(t).strip()
         earn_dt, days_to = "-", "-"
