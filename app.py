@@ -16,46 +16,6 @@ def format_cz(value, decimals=2):
 def get_fx_rates():
     return {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
 
-@st.cache_data(ttl=604800)
-def get_earnings_data(_tickers):
-    data = {}
-    today = datetime.now().date()
-    for t in list(_tickers):
-        t_str = str(t).strip()
-        earn_dt, days_to = "-", "-"
-        if not t_str.startswith("^"):
-            try:
-                tk = yf.Ticker(t_str)
-                # ALTERNATIVNÍ POHLED: Pokud selže kalendář, zkusíme vytáhnout data z objektu .info
-                e_date = None
-                
-                # Pokus 1: Klasický kalendář
-                try:
-                    cal = tk.calendar
-                    if cal is not None:
-                        if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
-                        elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
-                except: pass
-                
-                # Pokus 2: Pokud Pokus 1 selhal, zkusíme .info (zde bývá položka 'mostRecentQuarter' nebo detaily o earnings)
-                if not e_date:
-                    try:
-                        inf = tk.info
-                        # yfinance někdy ukládá timestamp příštích earnings sem
-                        if 'earnings' in inf and 'earningsChart' in inf['earnings']:
-                            # Pokud má Yahoo detailní strukturu
-                            pass
-                    except: pass
-                
-                if e_date and hasattr(e_date, 'date'):
-                    e_date = e_date.date()
-                    if e_date >= today:
-                        earn_dt = e_date.strftime('%d.%m.%Y')
-                        days_to = (e_date - today).days
-            except: pass
-        data[t_str] = {"earn_dt": earn_dt, "days_to": days_to}
-    return data
-
 @st.cache_data(ttl=600)
 def load_market_data(_tickers):
     data = {}
@@ -84,19 +44,19 @@ SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=cs
 try:
     df_raw = pd.read_csv(SHEET_URL).dropna(subset=['Ticker'])
     m_data = load_market_data(df_raw["Ticker"].unique())
-    earn_data = get_earnings_data(df_raw["Ticker"].unique())
     fx = get_fx_rates()
 
     st.sidebar.title("💎 MENU")
     page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
-    # ZMĚNA: "1 den" je nyní na prvním místě a index=0 zajistí, že se vybere jako výchozí
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
     graph_days = 252 if time_frame == "Od nákupu" else {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
 
     processed = []
     total_val, total_ref = 0, 0
+    today = datetime.now().date()
+
     for _, r in df_raw.iterrows():
         t = str(r["Ticker"]).strip()
         info = m_data.get(t, {"price": 0, "div": 0, "history": pd.Series()})
@@ -121,12 +81,27 @@ try:
         
         div_ks = info["div"]
         
+        # Zpracování ručního Earnings sloupce z tabulky
+        earn_dt_str = "-"
+        days_to = "-"
+        
+        if 'Earnings' in r and pd.notna(r['Earnings']):
+            raw_val = str(r['Earnings']).strip()
+            if raw_val and raw_val != "-":
+                try:
+                    # Podpora pro běžný formát DD.MM.YYYY
+                    parsed_date = pd.to_datetime(raw_val, dayfirst=True).date()
+                    earn_dt_str = parsed_date.strftime('%d.%m.%Y')
+                    days_to = (parsed_date - today).days
+                except:
+                    # Pokud by tam byl textový pozůstatek, vypíšeme ho bez výpočtu dnů
+                    earn_dt_str = raw_val
+        
         processed.append({
             "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
             "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
-            "Earnings": earn_data.get(t, {"earn_dt": "-"})["earn_dt"], 
-            "Dní": earn_data.get(t, {"days_to": "-"})["days_to"], 
+            "Earnings": earn_dt_str, "Dní": days_to, 
             "History": hist, "RefPrice": ref_price
         })
     df_p = pd.DataFrame(processed)
@@ -145,10 +120,16 @@ try:
             orig_row = df_p[df_p['Název'] == row['Název']].iloc[0]
             styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
             styles[4] = 'color: #2e7d32; font-weight: bold;' if row['Zisk %'] >= 0 else 'color: #d32f2f; font-weight: bold;'
+            
+            # Podbarvování podle dnů (ruční data z tabulky)
             try:
                 days = int(row['Dní'])
-                if days <= 14:
+                # 1. Situace: Termín vypršel (je záporný) -> Donucení k aktualizaci
+                if days < 0:
                     styles[8] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
+                # 2. Situace: Výsledky se blíží (10 a méně dní) -> Varování
+                elif days <= 10:
+                    styles[8] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
             except: pass
             return styles
 
@@ -159,7 +140,8 @@ try:
                 "CZK": lambda x: format_cz(x, 0),
                 "Zisk %": "{:,.2f}%",
                 "Div/ks": lambda x: format_cz(x),
-                "Div celkem": lambda x: format_cz(x, 0)
+                "Div celkem": lambda x: format_cz(x, 0),
+                "Dní": lambda x: f"{x}" if isinstance(x, int) else "-"
             })
 
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height=600)
