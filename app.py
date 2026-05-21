@@ -101,7 +101,7 @@ try:
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
             "History": hist, "RefPrice": ref_price,
-            "Měna": str(r["Měna"]).strip() # Předání měny pro graf na stránce Ostatní
+            "Měna": str(r["Měna"]).strip()
         })
     df_p = pd.DataFrame(processed)
 
@@ -164,8 +164,30 @@ try:
         st.plotly_chart(fig, use_container_width=True)
 
     elif page == "⚙️ Ostatní":
-        # Opravený hierarchický graf: nejdříve Měna, potom Společnost (Název)
-        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='CZK')
+        # Definice vlastních barev pro měny (CZK = světle modrá, EUR = tmavě modrá, USD = červená)
+        # Ostatní (např. GBP, DKK pokud se objeví) mají záložní šedou/neutrální barvu
+        color_map = {
+            '?',                  # Kořenový prvek
+            'CZK': '#29b6f6',     # Světle modrá (Light Blue 400)
+            'EUR': '#0d47a1',     # Tmavě modrá (Dark Blue 900)
+            'USD': '#d32f2f'      # Červená (Red 700)
+        }
+        
+        fig = px.sunburst(
+            df_p, 
+            path=['Měna', 'Název'], 
+            values='CZK',
+            color='Měna',
+            color_discrete_map=color_map
+        )
+        
+        # Nastavení textové šablony: %{label} vytiskne název (Měnu/Firmu) a %{percentParent:.1%} spočítá podíl
+        fig.update_traces(
+            texttemplate="<b>%{label}</b><br>%{percentParent:.1%}",
+            insidetextorientation='radial'
+        )
+        
         fig.update_layout(height=700)
         st.plotly_chart(fig, use_container_width=True)
+        
 except Exception as e: st.error(f"Kritická chyba: {e}")
