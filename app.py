@@ -164,13 +164,12 @@ try:
         st.plotly_chart(fig, use_container_width=True)
 
     elif page == "⚙️ Ostatní":
-        # Definice vlastních barev pro měny (CZK = světle modrá, EUR = tmavě modrá, USD = červená)
-        # Ostatní (např. GBP, DKK pokud se objeví) mají záložní šedou/neutrální barvu
+        # SPRÁVNÝ ZÁPIS SLOVNÍKU S BAREVNOU MAPOU (Složené závorky)
         color_map = {
-            '?',                  # Kořenový prvek
-            'CZK': '#29b6f6',     # Světle modrá (Light Blue 400)
-            'EUR': '#0d47a1',     # Tmavě modrá (Dark Blue 900)
-            'USD': '#d32f2f'      # Červená (Red 700)
+            'identity': '#616161',
+            'CZK': '#29b6f6',     # Světle modrá
+            'EUR': '#0d47a1',     # Tmavě modrá
+            'USD': '#d32f2f'      # Červená
         }
         
         fig = px.sunburst(
@@ -181,7 +180,6 @@ try:
             color_discrete_map=color_map
         )
         
-        # Nastavení textové šablony: %{label} vytiskne název (Měnu/Firmu) a %{percentParent:.1%} spočítá podíl
         fig.update_traces(
             texttemplate="<b>%{label}</b><br>%{percentParent:.1%}",
             insidetextorientation='radial'
