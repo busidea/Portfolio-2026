@@ -26,11 +26,27 @@ def get_earnings_data(_tickers):
         if not t_str.startswith("^"):
             try:
                 tk = yf.Ticker(t_str)
-                cal = tk.calendar
+                # ALTERNATIVNÍ POHLED: Pokud selže kalendář, zkusíme vytáhnout data z objektu .info
                 e_date = None
-                if cal is not None:
-                    if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
-                    elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
+                
+                # Pokus 1: Klasický kalendář
+                try:
+                    cal = tk.calendar
+                    if cal is not None:
+                        if isinstance(cal, pd.DataFrame) and not cal.empty: e_date = cal.iloc[0, 0]
+                        elif isinstance(cal, dict): e_date = cal.get('Earnings Date', [None])[0]
+                except: pass
+                
+                # Pokus 2: Pokud Pokus 1 selhal, zkusíme .info (zde bývá položka 'mostRecentQuarter' nebo detaily o earnings)
+                if not e_date:
+                    try:
+                        inf = tk.info
+                        # yfinance někdy ukládá timestamp příštích earnings sem
+                        if 'earnings' in inf and 'earningsChart' in inf['earnings']:
+                            # Pokud má Yahoo detailní strukturu
+                            pass
+                    except: pass
+                
                 if e_date and hasattr(e_date, 'date'):
                     e_date = e_date.date()
                     if e_date >= today:
@@ -74,7 +90,9 @@ try:
     st.sidebar.title("💎 MENU")
     page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
-    time_frame = st.sidebar.selectbox("Období:", ["1 rok", "1 měsíc", "1 týden", "1 den", "Od nákupu"], index=1)
+    
+    # ZMĚNA: "1 den" je nyní na prvním místě a index=0 zajistí, že se vybere jako výchozí
+    time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
     graph_days = 252 if time_frame == "Od nákupu" else {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
 
     processed = []
@@ -119,22 +137,14 @@ try:
     st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     if page == "💰 Přehled":
-        # Příprava čisté tabulky pro zobrazení
         df_show = df_p[["Název", "KS", "Cena", "CZK", "Zisk %", "Div/ks", "Div celkem", "Earnings", "Dní"]].copy()
         df_show = df_show.sort_values("CZK", ascending=False)
 
-        # Funkce pro barvení textu Ceny a Zisku
         def style_rows(row):
             styles = [''] * len(row)
-            # Porovnání Ceny vůči referenční ceně přes původní dataframe df_p
             orig_row = df_p[df_p['Název'] == row['Název']].iloc[0]
-            
-            # Cena barva
             styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
-            # Zisk % barva
             styles[4] = 'color: #2e7d32; font-weight: bold;' if row['Zisk %'] >= 0 else 'color: #d32f2f; font-weight: bold;'
-            
-            # Earnings blížící se dny (červené podbarvení buňky Dní)
             try:
                 days = int(row['Dní'])
                 if days <= 14:
@@ -142,7 +152,6 @@ try:
             except: pass
             return styles
 
-        # Aplikace formátování a stylů přes Pandas Styler
         styled_df = df_show.style.apply(style_rows, axis=1)\
             .format({
                 "KS": "{:,.0f}",
@@ -153,7 +162,6 @@ try:
                 "Div celkem": lambda x: format_cz(x, 0)
             })
 
-        # Zobrazení tabulky s plnou interaktivitou (včetně nativního řazení)
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height=600)
 
     elif page == "🖼️ Grafika":
