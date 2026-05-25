@@ -32,6 +32,9 @@ def load_market_data(_tickers):
                 if not t_df.empty:
                     cp = t_df['Close'].iloc[-1]
                     hist = t_df['Close'].ffill()
+                    # Odstranění časové zóny pro bezpečné porovnávání napříč trhy
+                    if hist.index.tz is not None:
+                        hist.index = hist.index.tz_localize(None)
                     if 'Dividends' in t_df.columns:
                         dv = t_df[t_df.index >= (datetime.now() - timedelta(days=365))]['Dividends'].sum()
             data[t] = {"price": cp, "div": dv, "history": hist}
@@ -151,27 +154,35 @@ try:
     elif page == "📈 Výkonnost":
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
         sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
+        
         idx_h = m_data[idx_t]["history"].tail(graph_days + 1)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
-        port_h = pd.Series(0.0, index=idx_h.index)
-        for _, r in df_p.iterrows():
-            h = r["History"].reindex(idx_h.index, method='ffill')
-            if not h.empty:
-                port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
-                if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
-        fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
-        st.plotly_chart(fig, use_container_width=True)
+        
+        if not idx_h.empty:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
+            port_h = pd.Series(0.0, index=idx_h.index)
+            
+            for _, r in df_p.iterrows():
+                if not r["History"].empty:
+                    # Bezpečné sjednocení časových os bez ohledu na datové typy
+                    h = r["History"].reindex(idx_h.index, method='ffill')
+                    if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
+                        port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
+                        if r["Název"] in sel: 
+                            fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
+            
+            fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Nepodařilo se načíst historii pro vybraný index.")
 
     elif page == "⚙️ Ostatní":
-        # SPRÁVNÝ ZÁPIS SLOVNÍKU S BAREVNOU MAPOU (Složené závorky)
         color_map = {
-            'identity': '#616161',
-            'CZK': '#29b6f6',     # Světle modrá
-            'EUR': '#0d47a1',     # Tmavě modrá
-            'USD': '#d32f2f'      # Červená
+            '?',
+            'CZK': '#29b6f6',
+            'EUR': '#0d47a1',
+            'USD': '#d32f2f'
         }
-        
         fig = px.sunburst(
             df_p, 
             path=['Měna', 'Název'], 
@@ -179,12 +190,10 @@ try:
             color='Měna',
             color_discrete_map=color_map
         )
-        
         fig.update_traces(
             texttemplate="<b>%{label}</b><br>%{percentParent:.1%}",
             insidetextorientation='radial'
         )
-        
         fig.update_layout(height=700)
         st.plotly_chart(fig, use_container_width=True)
         
