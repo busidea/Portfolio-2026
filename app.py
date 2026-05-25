@@ -164,7 +164,6 @@ try:
             
             for _, r in df_p.iterrows():
                 if not r["History"].empty:
-                    # Bezpečné sjednocení časových os bez ohledu na datové typy
                     h = r["History"].reindex(idx_h.index, method='ffill')
                     if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
                         port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
@@ -177,8 +176,8 @@ try:
             st.warning("Nepodařilo se načíst historii pro vybraný index.")
 
     elif page == "⚙️ Ostatní":
+        # Opravená a vyčištěná mapa barev
         color_map = {
-            '?',
             'CZK': '#29b6f6',
             'EUR': '#0d47a1',
             'USD': '#d32f2f'
