@@ -32,7 +32,6 @@ def load_market_data(_tickers):
                 if not t_df.empty:
                     cp = t_df['Close'].iloc[-1]
                     hist = t_df['Close'].ffill()
-                    # Odstranění časové zóny pro bezpečné porovnávání napříč trhy
                     if hist.index.tz is not None:
                         hist.index = hist.index.tz_localize(None)
                     if 'Dividends' in t_df.columns:
@@ -69,7 +68,7 @@ try:
         p_opt = pd.to_numeric(str(r['Nákupní cena včetně opcí']).replace(',','.'), errors='coerce') or 0
         
         ref_buy = p_std if view_mode == "Standard" else p_opt
-        curr_price = info["price"]
+        curr_price = info["price"] if pd.notna(info["price"]) else 0
         val_czk = ks * curr_price * rate
         hist = info["history"]
         
@@ -84,7 +83,6 @@ try:
         
         div_ks = info["div"]
         
-        # Zpracování ručního Earnings sloupce z tabulky
         earn_dt_str = "-"
         days_to = "-"
         
@@ -115,12 +113,19 @@ try:
 
     if page == "💰 Přehled":
         df_show = df_p[["Název", "KS", "Cena", "CZK", "Zisk %", "Div/ks", "Div celkem", "Earnings", "Dní"]].copy()
+        
+        df_show["CZK"] = df_show["CZK"].fillna(0)
         df_show = df_show.sort_values("CZK", ascending=False)
 
         def style_rows(row):
             styles = [''] * len(row)
-            orig_row = df_p[df_p['Název'] == row['Název']].iloc[0]
-            styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
+            try:
+                orig_match = df_p[df_p['Název'] == row['Název']]
+                if not orig_match.empty:
+                    orig_row = orig_match.iloc[0]
+                    styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
+            except: pass
+            
             styles[4] = 'color: #2e7d32; font-weight: bold;' if row['Zisk %'] >= 0 else 'color: #d32f2f; font-weight: bold;'
             
             try:
@@ -143,7 +148,8 @@ try:
                 "Dní": lambda x: f"{x}" if isinstance(x, int) else "-"
             })
 
-        st.dataframe(styled_df, use_container_width=True, hide_index=True, height=None)
+        # ZDE JE OPRAVA: Výška nastavena na 'content' pro automatické přizpůsobení počtu řádků
+        st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
     elif page == "🖼️ Grafika":
         fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='CZK')
@@ -154,7 +160,6 @@ try:
     elif page == "📈 Výkonnost":
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
         sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
-        
         idx_h = m_data[idx_t]["history"].tail(graph_days + 1)
         
         if not idx_h.empty:
@@ -176,7 +181,6 @@ try:
             st.warning("Nepodařilo se načíst historii pro vybraný index.")
 
     elif page == "⚙️ Ostatní":
-        # Opravená a vyčištěná mapa barev
         color_map = {
             'CZK': '#29b6f6',
             'EUR': '#0d47a1',
