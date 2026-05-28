@@ -143,7 +143,7 @@ try:
                 "Dní": lambda x: f"{x}" if isinstance(x, int) else "-"
             })
 
-        st.dataframe(styled_df, use_container_width=True, hide_index=True, height=600)
+        st.dataframe(styled_df, use_container_width=True, hide_index=True, height=None)
 
     elif page == "🖼️ Grafika":
         fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='CZK')
