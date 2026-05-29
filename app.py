@@ -43,9 +43,9 @@ def load_market_data(_tickers):
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 
-# Změna formátu URL adres pro maximální kompatibilitu s Google Sheets API bez chyb 400
-URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/pub?output=csv&gid=0"
-URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/pub?output=csv&gid=937653419"
+# NOVÝ FORMÁT: Použití gviz API, které spolehlivě obchází chyby 401 a bere data z veřejně sdíleného odkazu
+URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid=0"
+URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid=937653419"
 
 try:
     df_raw = pd.read_csv(URL_PORTFOLIO).dropna(subset=['Ticker'])
@@ -180,7 +180,14 @@ try:
         st.title("📋 Úkoly a Poznámky")
         
         st.subheader("📌 Obecné úkoly")
-        if not df_ukoly_raw.empty and "Úkol" in df_ukoly_raw.columns:
+        # Kontrola, zda se data načetla a sloupec "Úkol" existuje (v gviz formátu může mít drobné odchylky)
+        if not df_ukoly_raw.empty and any("Úkol" in str(col) or "Ukoly" in str(col) for col in df_ukoly_raw.columns):
+            # Sjednocení názvu sloupce, pokud by se načetl jinak
+            if "Úkol" not in df_ukoly_raw.columns and len(df_ukoly_raw.columns) > 0:
+                df_ukoly_raw.rename(columns={df_ukoly_raw.columns[0]: "Úkol"}, inplace=True)
+            if len(df_ukoly_raw.columns) > 1 and "Hotovo" not in df_ukoly_raw.columns:
+                df_ukoly_raw.rename(columns={df_ukoly_raw.columns[1]: "Hotovo"}, inplace=True)
+                
             df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
             if "Hotovo" not in df_ukoly.columns:
                 df_ukoly["Hotovo"] = "Ne"
@@ -191,7 +198,7 @@ try:
             
             st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
         else:
-            st.info("V tabulce úkolů nemáte žádné záznamy. Zkontrolujte, že na prvním řádku druhého listu máte přesně sloupce 'Úkol' a 'Hotovo'.")
+            st.info("V tabulce úkolů nemáte žádné záznamy nebo se nenačetly sloupce. Zkontrolujte, že na prvním řádku listu 'Ukoly' máte sloupce 'Úkol' a 'Hotovo'.")
             
         st.divider()
         
