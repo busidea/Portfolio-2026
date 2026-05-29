@@ -40,16 +40,24 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# --- 2. LOGIKA ---
+# --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
-SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+# URL pro 1. list (Portfolio) - automaticky výchozí list
+URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+# URL pro 2. list (Úkoly) - vyhledá list podle názvu "Úkoly"
+URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=%C3%9Akoly"
+
 try:
-    df_raw = pd.read_csv(SHEET_URL).dropna(subset=['Ticker'])
+    df_raw = pd.read_csv(URL_PORTFOLIO).dropna(subset=['Ticker'])
     m_data = load_market_data(df_raw["Ticker"].unique())
     fx = get_fx_rates()
 
+    # Pokus o načtení druhého listu s úkoly
+    try: df_ukoly_raw = pd.read_csv(URL_UKOLY)
+    except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Hotovo"])
+
     st.sidebar.title("💎 MENU")
-    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "⚙️ Ostatní"])
+    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
@@ -85,7 +93,6 @@ try:
         
         earn_dt_str = "-"
         days_to = "-"
-        
         if 'Earnings' in r and pd.notna(r['Earnings']):
             raw_val = str(r['Earnings']).strip()
             if raw_val and raw_val != "-":
@@ -93,14 +100,17 @@ try:
                     parsed_date = pd.to_datetime(raw_val, dayfirst=True).date()
                     earn_dt_str = parsed_date.strftime('%d.%m.%Y')
                     days_to = (parsed_date - today).days
-                except:
-                    earn_dt_str = raw_val
+                except: earn_dt_str = raw_val
         
+        # Bezpečné načtení sloupce Poznámka
+        poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
+
         processed.append({
             "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
             "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
+            "Poznámka": poznamka_val,
             "History": hist, "RefPrice": ref_price,
             "Měna": str(r["Měna"]).strip()
         })
@@ -111,9 +121,10 @@ try:
     diff = total_val - total_ref
     st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
+    # --- STRÁNKY ---
     if page == "💰 Přehled":
-        df_show = df_p[["Název", "KS", "Cena", "CZK", "Zisk %", "Div/ks", "Div celkem", "Earnings", "Dní"]].copy()
-        
+        # Přidán sloupec Poznámka přímo do přehledové tabulky
+        df_show = df_p[["Název", "KS", "Cena", "CZK", "Zisk %", "Div/ks", "Div celkem", "Earnings", "Dní", "Poznámka"]].copy()
         df_show["CZK"] = df_show["CZK"].fillna(0)
         df_show = df_show.sort_values("CZK", ascending=False)
 
@@ -125,30 +136,20 @@ try:
                     orig_row = orig_match.iloc[0]
                     styles[2] = 'color: #2e7d32; font-weight: bold;' if orig_row['Cena'] >= orig_row['RefPrice'] else 'color: #d32f2f; font-weight: bold;'
             except: pass
-            
             styles[4] = 'color: #2e7d32; font-weight: bold;' if row['Zisk %'] >= 0 else 'color: #d32f2f; font-weight: bold;'
-            
             try:
                 days = int(row['Dní'])
-                if days < 0:
-                    styles[8] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
-                elif days <= 10:
-                    styles[8] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
+                if days < 0: styles[8] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
+                elif days <= 10: styles[8] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
             except: pass
             return styles
 
         styled_df = df_show.style.apply(style_rows, axis=1)\
             .format({
-                "KS": "{:,.0f}",
-                "Cena": lambda x: format_cz(x),
-                "CZK": lambda x: format_cz(x, 0),
-                "Zisk %": "{:,.2f}%",
-                "Div/ks": lambda x: format_cz(x),
-                "Div celkem": lambda x: format_cz(x, 0),
+                "KS": "{:,.0f}", "Cena": lambda x: format_cz(x), "CZK": lambda x: format_cz(x, 0),
+                "Zisk %": "{:,.2f}%", "Div/ks": lambda x: format_cz(x), "Div celkem": lambda x: format_cz(x, 0),
                 "Dní": lambda x: f"{x}" if isinstance(x, int) else "-"
             })
-
-        # ZDE JE OPRAVA: Výška nastavena na 'content' pro automatické přizpůsobení počtu řádků
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
     elif page == "🖼️ Grafika":
@@ -166,37 +167,48 @@ try:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
             port_h = pd.Series(0.0, index=idx_h.index)
-            
             for _, r in df_p.iterrows():
                 if not r["History"].empty:
                     h = r["History"].reindex(idx_h.index, method='ffill')
                     if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
                         port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
-                        if r["Název"] in sel: 
-                            fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
-            
+                        if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
             fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
             st.plotly_chart(fig, use_container_width=True)
+        else: st.warning("Nepodařilo se načíst historii pro vybraný index.")
+
+    elif page == "📋 Úkoly a Poznámky":
+        st.title("📋 Úkoly a Poznámky")
+        
+        # 1. ČÁST: Obecné úkoly z druhého listu
+        st.subheader("📌 Obecné úkoly (z tabulky Úkoly)")
+        if not df_ukoly_raw.empty and "Úkol" in df_ukoly_raw.columns:
+            df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
+            if "Hotovo" not North in df_ukoly.columns:
+                df_ukoly["Hotovo"] = "Ne"
+            df_ukoly["Hotovo"] = df_ukoly["Hotovo"].fillna("Ne").astype(str).str.strip()
+            
+            def style_ukoly(row):
+                return ['background-color: #e8f5e9; color: #2e7d32; text-decoration: line-through;' if row["Hotovo"].lower() in ["ano", "yes", "true", "1"] else ''] * len(row)
+            
+            st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
         else:
-            st.warning("Nepodařilo se načíst historii pro vybraný index.")
+            st.info("Na druhém listu tabulky 'Úkoly' nemáte žádné úkoly nebo list chybí. Vytvořte sloupce 'Úkol' a 'Hotovo'.")
+            
+        st.divider()
+        
+        # 2. ČÁST: Poznámky ke konkrétním akciím vyfiltrované z prvního listu
+        st.subheader("🔍 Poznámky ke konkrétním titulům")
+        df_notes_only = df_p[df_p["Poznámka"] != "-"][["Název", "Poznámka"]].copy()
+        if not df_notes_only.empty:
+            st.dataframe(df_notes_only, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nemáte žádné specifické poznámky u akcií v prvním listu.")
 
     elif page == "⚙️ Ostatní":
-        color_map = {
-            'CZK': '#29b6f6',
-            'EUR': '#0d47a1',
-            'USD': '#d32f2f'
-        }
-        fig = px.sunburst(
-            df_p, 
-            path=['Měna', 'Název'], 
-            values='CZK',
-            color='Měna',
-            color_discrete_map=color_map
-        )
-        fig.update_traces(
-            texttemplate="<b>%{label}</b><br>%{percentParent:.1%}",
-            insidetextorientation='radial'
-        )
+        color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
+        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='CZK', color='Měna', color_discrete_map=color_map)
+        fig.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
         fig.update_layout(height=700)
         st.plotly_chart(fig, use_container_width=True)
         
