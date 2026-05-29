@@ -42,7 +42,7 @@ def load_market_data(_tickers):
 
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
-# URL pro 1. list (Portfolio) - automaticky výchozí list
+# URL pro 1. list (Portfolio) - automaticky vezme první záložku v pořadí (gid=0)
 URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
 # URL pro 2. list (Úkoly) - vyhledá list podle názvu "Úkoly"
 URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=%C3%9Akoly"
@@ -119,11 +119,10 @@ try:
     st.sidebar.divider()
     st.sidebar.metric("Celkem CZK", f"{format_cz(total_val, 0)} CZK")
     diff = total_val - total_ref
-    st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
+    st.sidebar.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     # --- STRÁNKY ---
     if page == "💰 Přehled":
-        # Přidán sloupec Poznámka přímo do přehledové tabulky
         df_show = df_p[["Název", "KS", "Cena", "CZK", "Zisk %", "Div/ks", "Div celkem", "Earnings", "Dní", "Poznámka"]].copy()
         df_show["CZK"] = df_show["CZK"].fillna(0)
         df_show = df_show.sort_values("CZK", ascending=False)
@@ -180,11 +179,11 @@ try:
     elif page == "📋 Úkoly a Poznámky":
         st.title("📋 Úkoly a Poznámky")
         
-        # 1. ČÁST: Obecné úkoly z druhého listu
+        # 1. ČÁST: Obecné úkoly z druhého listu (OPRAVENO: "not in")
         st.subheader("📌 Obecné úkoly (z tabulky Úkoly)")
         if not df_ukoly_raw.empty and "Úkol" in df_ukoly_raw.columns:
             df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
-            if "Hotovo" not North in df_ukoly.columns:
+            if "Hotovo" not in df_ukoly.columns:
                 df_ukoly["Hotovo"] = "Ne"
             df_ukoly["Hotovo"] = df_ukoly["Hotovo"].fillna("Ne").astype(str).str.strip()
             
@@ -193,7 +192,7 @@ try:
             
             st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
         else:
-            st.info("Na druhém listu tabulky 'Úkoly' nemáte žádné úkoly nebo list chybí. Vytvořte sloupce 'Úkol' a 'Hotovo'.")
+            st.info("Na druhém listu tabulky 'Úkoly' nemáte žádné úkoly nebo list chybí. Vytvořte sloupce 'Úkol' and 'Hotovo'.")
             
         st.divider()
         
