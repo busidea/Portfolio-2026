@@ -43,7 +43,6 @@ def load_market_data(_tickers):
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 
-# NOVÝ FORMÁT: Použití gviz API, které spolehlivě obchází chyby 401 a bere data z veřejně sdíleného odkazu
 URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid=0"
 URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid=937653419"
 
@@ -54,7 +53,7 @@ try:
 
     # Načtení druhého listu s úkoly
     try: df_ukoly_raw = pd.read_csv(URL_UKOLY)
-    except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Hotovo"])
+    except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
 
     st.sidebar.title("💎 MENU")
     page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "⚙️ Ostatní"])
@@ -102,7 +101,6 @@ try:
                     days_to = (parsed_date - today).days
                 except: earn_dt_str = raw_val
         
-        # Bezpečné načtení sloupce Poznámka
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
 
         processed.append({
@@ -179,26 +177,74 @@ try:
     elif page == "📋 Úkoly a Poznámky":
         st.title("📋 Úkoly a Poznámky")
         
-        st.subheader("📌 Obecné úkoly")
-        # Kontrola, zda se data načetla a sloupec "Úkol" existuje (v gviz formátu může mít drobné odchylky)
-        if not df_ukoly_raw.empty and any("Úkol" in str(col) or "Ukoly" in str(col) for col in df_ukoly_raw.columns):
-            # Sjednocení názvu sloupce, pokud by se načetl jinak
+        st.subheader("📌 Obecné úkoly (s odpočtem termínu)")
+        
+        # Sjednocení a kontrola sloupců pro nový formát s Termínem
+        if not df_ukoly_raw.empty:
             if "Úkol" not in df_ukoly_raw.columns and len(df_ukoly_raw.columns) > 0:
                 df_ukoly_raw.rename(columns={df_ukoly_raw.columns[0]: "Úkol"}, inplace=True)
-            if len(df_ukoly_raw.columns) > 1 and "Hotovo" not in df_ukoly_raw.columns:
-                df_ukoly_raw.rename(columns={df_ukoly_raw.columns[1]: "Hotovo"}, inplace=True)
-                
+            
+            # Automatické přejmenování druhého sloupce na "Termín", pokud se jmenuje jinak
+            if len(df_ukoly_raw.columns) > 1 and "Termín" not in df_ukoly_raw.columns:
+                df_ukoly_raw.rename(columns={df_ukoly_raw.columns[1]: "Termín"}, inplace=True)
+
             df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
-            if "Hotovo" not in df_ukoly.columns:
-                df_ukoly["Hotovo"] = "Ne"
-            df_ukoly["Hotovo"] = df_ukoly["Hotovo"].fillna("Ne").astype(str).str.strip()
             
-            def style_ukoly(row):
-                return ['background-color: #e8f5e9; color: #2e7d32; text-decoration: line-through;' if row["Hotovo"].lower() in ["ano", "yes", "true", "1"] else ''] * len(row)
+            # Výpočet dní do termínu
+            processed_ukoly = []
+            for _, row_u in df_ukoly.iterrows():
+                u_text = str(row_u["Úkol"]).strip()
+                u_date_str = "-"
+                u_days_to = "-"
+                
+                if "Termín" in df_ukoly.columns and pd.notna(row_u["Termín"]):
+                    raw_date = str(row_u["Termín"]).strip()
+                    if raw_date and raw_date != "-":
+                        try:
+                            parsed_u_date = pd.to_datetime(raw_date, dayfirst=True).date()
+                            u_date_str = parsed_u_date.strftime('%d.%m.%Y')
+                            u_days_to = (parsed_u_date - today).days
+                        except:
+                            u_date_str = raw_date
+                
+                processed_ukoly.append({"Úkol": u_text, "Termín": u_date_str, "Dní do termínu": u_days_to})
             
-            st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
+            df_ukoly_final = pd.DataFrame(processed_ukoly)
+            
+            # Řazení úkolů podle naléhavosti (nejstarší/prošlé nahoře, úkoly bez data dole)
+            def sorting_key(val):
+                if isinstance(val, int): return val
+                return 999999
+            df_ukoly_final["sort_key"] = df_ukoly_final["Dní do termínu"].apply(sorting_key)
+            df_ukoly_final = df_ukoly_final.sort_values("sort_key").drop(columns=["sort_key"])
+
+            # Stylování řádků podle zbývajících dní
+            def style_ukoly_rows(row):
+                styles = [''] * len(row)
+                try:
+                    days = int(row['Dní do termínu'])
+                    if days < 0:
+                        # Červená pro prošlé úkoly
+                        styles[2] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
+                    elif days <= 7:
+                        # Oranžová pro úkoly, co hoří tento týden
+                        styles[2] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
+                    else:
+                        # Zelená pro dostatek času
+                        styles[2] = 'background-color: #e8f5e9; color: #2e7d32; text-align: center;'
+                except:
+                    styles[2] = 'text-align: center;'
+                return styles
+
+            st.dataframe(
+                df_ukoly_final.style.apply(style_ukoly_rows, axis=1).format({
+                    "Dní do termínu": lambda x: f"{x}" if isinstance(x, int) else "-"
+                }), 
+                use_container_width=True, 
+                hide_index=True
+            )
         else:
-            st.info("V tabulce úkolů nemáte žádné záznamy nebo se nenačetly sloupce. Zkontrolujte, že na prvním řádku listu 'Ukoly' máte sloupce 'Úkol' a 'Hotovo'.")
+            st.info("V tabulce úkolů nemáte žádné záznamy. Zkontrolujte, že na prvním řádku listu 'Ukoly' máte sloupce 'Úkol' a 'Termín'.")
             
         st.divider()
         
