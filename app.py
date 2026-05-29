@@ -42,17 +42,17 @@ def load_market_data(_tickers):
 
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
-# URL pro 1. list (Portfolio) - automaticky vezme první záložku v pořadí (gid=0)
+# URL pro 1. list (Tituly) - stahujeme přes bezpečné gid=0
 URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
-# URL pro 2. list (Ukoly) - BEZ DIAKRITIKY PRO ZABRÁNĚNÍ CHYBY 400
-URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Ukoly"
+# URL pro 2. list (Ukoly) - stahujeme přes vaše přesné gid=937653419
+URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=937653419"
 
 try:
     df_raw = pd.read_csv(URL_PORTFOLIO).dropna(subset=['Ticker'])
     m_data = load_market_data(df_raw["Ticker"].unique())
     fx = get_fx_rates()
 
-    # Pokus o načtení druhého listu s úkoly
+    # Načtení druhého listu s úkoly pomocí GID
     try: df_ukoly_raw = pd.read_csv(URL_UKOLY)
     except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Hotovo"])
 
@@ -102,7 +102,7 @@ try:
                     days_to = (parsed_date - today).days
                 except: earn_dt_str = raw_val
         
-        # Bezpečné načtení sloupce Poznámka (s dlouhým á)
+        # Bezpečné načtení sloupce Poznámka
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
 
         processed.append({
@@ -191,7 +191,7 @@ try:
             
             st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
         else:
-            st.info("Na druhém listu tabulky 'Ukoly' nemáte žádné úkoly nebo list chybí. Vytvořte na prvním řádku sloupce 'Úkol' a 'Hotovo'.")
+            st.info("V tabulce úkolů nemáte žádné záznamy. Zkontrolujte, že na prvním řádku druhého listu máte sloupce 'Úkol' a 'Hotovo'.")
             
         st.divider()
         
