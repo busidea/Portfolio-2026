@@ -44,8 +44,8 @@ def load_market_data(_tickers):
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 # URL pro 1. list (Portfolio) - automaticky vezme první záložku v pořadí (gid=0)
 URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
-# URL pro 2. list (Úkoly) - vyhledá list podle názvu "Úkoly"
-URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=%C3%9Akoly"
+# URL pro 2. list (Ukoly) - BEZ DIAKRITIKY PRO ZABRÁNĚNÍ CHYBY 400
+URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Ukoly"
 
 try:
     df_raw = pd.read_csv(URL_PORTFOLIO).dropna(subset=['Ticker'])
@@ -102,7 +102,7 @@ try:
                     days_to = (parsed_date - today).days
                 except: earn_dt_str = raw_val
         
-        # Bezpečné načtení sloupce Poznámka
+        # Bezpečné načtení sloupce Poznámka (s dlouhým á)
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
 
         processed.append({
@@ -119,7 +119,7 @@ try:
     st.sidebar.divider()
     st.sidebar.metric("Celkem CZK", f"{format_cz(total_val, 0)} CZK")
     diff = total_val - total_ref
-    st.sidebar.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
+    st.sidebar.metric("Změna", f"{format_cz(diff, 0)} CZK", f"{(diff/total_ref*100 if total_ref>0 else 0):.2f} %")
 
     # --- STRÁNKY ---
     if page == "💰 Přehled":
@@ -179,8 +179,7 @@ try:
     elif page == "📋 Úkoly a Poznámky":
         st.title("📋 Úkoly a Poznámky")
         
-        # 1. ČÁST: Obecné úkoly z druhého listu (OPRAVENO: "not in")
-        st.subheader("📌 Obecné úkoly (z tabulky Úkoly)")
+        st.subheader("📌 Obecné úkoly")
         if not df_ukoly_raw.empty and "Úkol" in df_ukoly_raw.columns:
             df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
             if "Hotovo" not in df_ukoly.columns:
@@ -192,11 +191,10 @@ try:
             
             st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
         else:
-            st.info("Na druhém listu tabulky 'Úkoly' nemáte žádné úkoly nebo list chybí. Vytvořte sloupce 'Úkol' and 'Hotovo'.")
+            st.info("Na druhém listu tabulky 'Ukoly' nemáte žádné úkoly nebo list chybí. Vytvořte na prvním řádku sloupce 'Úkol' a 'Hotovo'.")
             
         st.divider()
         
-        # 2. ČÁST: Poznámky ke konkrétním akciím vyfiltrované z prvního listu
         st.subheader("🔍 Poznámky ke konkrétním titulům")
         df_notes_only = df_p[df_p["Poznámka"] != "-"][["Název", "Poznámka"]].copy()
         if not df_notes_only.empty:
