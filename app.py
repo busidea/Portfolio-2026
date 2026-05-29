@@ -42,17 +42,17 @@ def load_market_data(_tickers):
 
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
-# URL pro 1. list (Tituly) - stahujeme přes bezpečné gid=0
-URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
-# URL pro 2. list (Ukoly) - stahujeme přes vaše přesné gid=937653419
-URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=937653419"
+
+# Změna formátu URL adres pro maximální kompatibilitu s Google Sheets API bez chyb 400
+URL_PORTFOLIO = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/pub?output=csv&gid=0"
+URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/pub?output=csv&gid=937653419"
 
 try:
     df_raw = pd.read_csv(URL_PORTFOLIO).dropna(subset=['Ticker'])
     m_data = load_market_data(df_raw["Ticker"].unique())
     fx = get_fx_rates()
 
-    # Načtení druhého listu s úkoly pomocí GID
+    # Načtení druhého listu s úkoly
     try: df_ukoly_raw = pd.read_csv(URL_UKOLY)
     except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Hotovo"])
 
@@ -191,7 +191,7 @@ try:
             
             st.dataframe(df_ukoly.style.apply(style_ukoly, axis=1), use_container_width=True, hide_index=True)
         else:
-            st.info("V tabulce úkolů nemáte žádné záznamy. Zkontrolujte, že na prvním řádku druhého listu máte sloupce 'Úkol' a 'Hotovo'.")
+            st.info("V tabulce úkolů nemáte žádné záznamy. Zkontrolujte, že na prvním řádku druhého listu máte přesně sloupce 'Úkol' a 'Hotovo'.")
             
         st.divider()
         
