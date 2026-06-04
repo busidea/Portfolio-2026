@@ -277,8 +277,8 @@ try:
         
         st.divider()
         
-        # --- SEKCE B: ZPRÁVY Z PORTFOLIA (Kompaktní verze Yahoo Finance) ---
-        found_any_news = False
+        # --- SEKCE B: KOMBINOVANÉ ZPRÁVY Z PORTFOLIA ŘAZENÉ PODLE ČASU ---
+        all_portfolio_news = []
         
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
             ticker_symbol = row_p["Ticker"]
@@ -289,8 +289,6 @@ try:
                 news_list = ticker_obj.news
                 
                 if news_list:
-                    printed_for_this_ticker = 0 
-                    
                     for item in news_list:
                         title_news = item.get("title")
                         link_news = item.get("link")
@@ -302,27 +300,44 @@ try:
                         if not title_news or not link_news:
                             continue
                             
-                        found_any_news = True
-                        printed_for_this_ticker += 1
-                        
                         publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
                         
+                        # Extrakce Unix timestamp pro potřeby řazení
                         try:
                             raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
-                            pub_time = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00")).strftime('%d.%m.%Y %H:%M') if "T" in str(raw_time) else datetime.fromtimestamp(int(raw_time)).strftime('%d.%m.%Y %H:%M')
+                            if "T" in str(raw_time):
+                                dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+                                timestamp = int(dt_obj.timestamp())
+                            else:
+                                timestamp = int(raw_time)
                         except:
-                            pub_time = "Aktuální"
-                        
-                        # Kompaktní výpis: Společnost a detaily na jednom řádku, hned pod tím odkaz, bez prázdných mezer
-                        st.markdown(f"📌 **{company_name} ({ticker_symbol})** | *{pub_time}* | *Zdroj: {publisher}*")
-                        st.markdown(f"[{title_news}]({link_news})")
-                        
-                        if printed_for_this_ticker >= 3:
-                            break
+                            timestamp = 0
+                            
+                        all_portfolio_news.append({
+                            "company": company_name,
+                            "ticker": ticker_symbol,
+                            "title": title_news,
+                            "link": link_news,
+                            "publisher": publisher,
+                            "timestamp": timestamp
+                        })
             except:
                 pass
                 
-        if not found_any_news:
+        if all_portfolio_news:
+            # Seřadíme všechny zprávy napříč portfoliem od nejnovější (nejvyšší timestamp) po nejstarší
+            all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
+            
+            # Zobrazíme maximálně 15 nejnovějších zpráv, zbytek starších odpadne
+            for news in all_portfolio_news[:15]:
+                try:
+                    pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
+                except:
+                    pub_time = "Aktuální"
+                    
+                st.markdown(f"📌 **{news['company']} ({news['ticker']})** | *{pub_time}* | *Zdroj: {news['publisher']}*")
+                st.markdown(f"[{news['title']}]({news['link']})")
+        else:
             st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
