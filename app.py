@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import feedparser  # Knihovna pro čtení RSS kanálů (např. Patria.cz)
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
@@ -40,6 +41,24 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
+# Funkce pro načtení ranní svodky z Patria.cz
+@st.cache_data(ttl=3600)
+def get_patria_svodka():
+    try:
+        feed = feedparser.parse("https://www.patria.cz/rss/rss.aspx")
+        # Hledáme nejrelevantnější ranní komentář nebo prostě nejnovější hlavní zprávu
+        for entry in feed.entries:
+            # Patria dává ranní svodky často s těmito klíčovými slovy
+            if any(x in entry.title.lower() for x in ["restart", "svodka", "zahájení", "přehled", "výhled"]):
+                return {"title": entry.title, "summary": entry.summary, "link": entry.link}
+        # Pokud nenašel specificky ranní, vezme prostě první (nejnovější) zprávu dne
+        if feed.entries:
+            first = feed.entries[0]
+            return {"title": first.title, "summary": first.summary, "link": first.link}
+    except:
+        pass
+    return {"title": "Svodka momentálně nedostupná", "summary": "Nepodařilo se připojit k RSS kanálu Patria.cz.", "link": "https://www.patria.cz"}
+
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
 
@@ -48,15 +67,15 @@ URL_UKOLY = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:
 
 try:
     df_raw = pd.read_csv(URL_PORTFOLIO).dropna(subset=['Ticker'])
-    m_data = load_market_data(df_raw["Ticker"].unique())
+    tickers_list = df_raw["Ticker"].unique()
+    m_data = load_market_data(tickers_list)
     fx = get_fx_rates()
 
-    # Načtení druhého listu s úkoly
     try: df_ukoly_raw = pd.read_csv(URL_UKOLY)
     except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
 
     st.sidebar.title("💎 MENU")
-    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "⚙️ Ostatní"])
+    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "📰 Tržní zprávy", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
@@ -104,7 +123,7 @@ try:
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
 
         processed.append({
-            "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
+            "Ticker": t, "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
             "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
@@ -167,7 +186,7 @@ try:
             for _, r in df_p.iterrows():
                 if not r["History"].empty:
                     h = r["History"].reindex(idx_h.index, method='ffill')
-                    if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
+                    if not h.empty vibrat and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
                         port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
                         if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
             fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
@@ -176,27 +195,20 @@ try:
 
     elif page == "📋 Úkoly a Poznámky":
         st.title("📋 Úkoly a Poznámky")
-        
         st.subheader("📌 Obecné úkoly (s odpočtem termínu)")
         
-        # Sjednocení a kontrola sloupců pro nový formát s Termínem
         if not df_ukoly_raw.empty:
             if "Úkol" not in df_ukoly_raw.columns and len(df_ukoly_raw.columns) > 0:
                 df_ukoly_raw.rename(columns={df_ukoly_raw.columns[0]: "Úkol"}, inplace=True)
-            
-            # Automatické přejmenování druhého sloupce na "Termín", pokud se jmenuje jinak
             if len(df_ukoly_raw.columns) > 1 and "Termín" not in df_ukoly_raw.columns:
                 df_ukoly_raw.rename(columns={df_ukoly_raw.columns[1]: "Termín"}, inplace=True)
 
             df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
-            
-            # Výpočet dní do termínu
             processed_ukoly = []
             for _, row_u in df_ukoly.iterrows():
                 u_text = str(row_u["Úkol"]).strip()
                 u_date_str = "-"
                 u_days_to = "-"
-                
                 if "Termín" in df_ukoly.columns and pd.notna(row_u["Termín"]):
                     raw_date = str(row_u["Termín"]).strip()
                     if raw_date and raw_date != "-":
@@ -204,56 +216,85 @@ try:
                             parsed_u_date = pd.to_datetime(raw_date, dayfirst=True).date()
                             u_date_str = parsed_u_date.strftime('%d.%m.%Y')
                             u_days_to = (parsed_u_date - today).days
-                        except:
-                            u_date_str = raw_date
-                
+                        except: u_date_str = raw_date
                 processed_ukoly.append({"Úkol": u_text, "Termín": u_date_str, "Dní do termínu": u_days_to})
             
             df_ukoly_final = pd.DataFrame(processed_ukoly)
-            
-            # Řazení úkolů podle naléhavosti (nejstarší/prošlé nahoře, úkoly bez data dole)
-            def sorting_key(val):
-                if isinstance(val, int): return val
-                return 999999
-            df_ukoly_final["sort_key"] = df_ukoly_final["Dní do termínu"].apply(sorting_key)
+            df_ukoly_final["sort_key"] = df_ukoly_final["Dní do termínu"].apply(lambda x: x if isinstance(x, int) else 999999)
             df_ukoly_final = df_ukoly_final.sort_values("sort_key").drop(columns=["sort_key"])
 
-            # Stylování řádků podle zbývajících dní
             def style_ukoly_rows(row):
                 styles = [''] * len(row)
                 try:
                     days = int(row['Dní do termínu'])
-                    if days < 0:
-                        # Červená pro prošlé úkoly
-                        styles[2] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
-                    elif days <= 7:
-                        # Oranžová pro úkoly, co hoří tento týden
-                        styles[2] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
-                    else:
-                        # Zelená pro dostatek času
-                        styles[2] = 'background-color: #e8f5e9; color: #2e7d32; text-align: center;'
-                except:
-                    styles[2] = 'text-align: center;'
+                    if days < 0: styles[2] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
+                    elif days <= 7: styles[2] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
+                    else: styles[2] = 'background-color: #e8f5e9; color: #2e7d32; text-align: center;'
+                except: styles[2] = 'text-align: center;'
                 return styles
 
-            st.dataframe(
-                df_ukoly_final.style.apply(style_ukoly_rows, axis=1).format({
-                    "Dní do termínu": lambda x: f"{x}" if isinstance(x, int) else "-"
-                }), 
-                use_container_width=True, 
-                hide_index=True
-            )
-        else:
-            st.info("V tabulce úkolů nemáte žádné záznamy. Zkontrolujte, že na prvním řádku listu 'Ukoly' máte sloupce 'Úkol' a 'Termín'.")
+            st.dataframe(df_ukoly_final.style.apply(style_ukoly_rows, axis=1).format({"Dní do termínu": lambda x: f"{x}" if isinstance(x, int) else "-"}), use_container_width=True, hide_index=True)
+        else: st.info("V tabulce úkolů nemáte žádné záznamy.")
             
         st.divider()
-        
         st.subheader("🔍 Poznámky ke konkrétním titulům")
         df_notes_only = df_p[df_p["Poznámka"] != "-"][["Název", "Poznámka"]].copy()
-        if not df_notes_only.empty:
-            st.dataframe(df_notes_only, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nemáte žádné specifické poznámky u akcií v prvním listu.")
+        if not df_notes_only.empty: st.dataframe(df_notes_only, use_container_width=True, hide_index=True)
+        else: st.info("Nemáte žádné specifické poznámky u akcií v prvním listu.")
+
+    elif page == "📰 Tržní zprávy":
+        st.title("📰 Tržní zprávy a Svodky")
+        
+        # --- SEKCE A: RANNÍ SVODKA (Patria.cz v češtině) ---
+        st.subheader("☀️ Hlavní ranní svodka trhu (Patria.cz)")
+        svodka = get_patria_svodka()
+        
+        with st.container(border=True):
+            st.markdown(f"#### 🌐 {svodka['title']}")
+            # Vyčištění HTML značek, pokud by je Patria v RSS posílala
+            clean_summary = svodka['summary'].replace('<p>', '').replace('</p>', '').replace('<br />', '\n')
+            st.write(clean_summary)
+            st.markdown(f"[Otevřít celý článek na Patria.cz]({svodka['link']})")
+        
+        st.divider()
+        
+        # --- SEKCE B: ZPRÁVY PODLE VAŠEHO PORTFOLIA (Yahoo Finance v angličtině) ---
+        st.subheader("🎯 Zprávy ke společnostem ve vašem portfoliu")
+        st.caption("Filtrováno automaticky podle tickerů, které reálně vlastníte. Zobrazují se maximálně 3 nejnovější zprávy pro každý titul.")
+        
+        found_any_news = False
+        
+        # Procházíme unikátní tituly z portfolia
+        for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
+            ticker_symbol = row_p["Ticker"]
+            company_name = row_p["Název"]
+            
+            try:
+                ticker_obj = yf.Ticker(ticker_symbol)
+                news_list = ticker_obj.news
+                
+                if news_list:
+                    # Vezmeme max 3 zprávy, aby nebyl uživatel zahlcen
+                    for item in news_list[:3]:
+                        found_any_news = True
+                        title_news = item.get("title", "Bez názvu")
+                        publisher = item.get("publisher", "Yahoo Finance")
+                        link_news = item.get("link", "#")
+                        
+                        # Pokus o převedení času vydání na čitelný formát
+                        try:
+                            pub_time = datetime.fromtimestamp(item.get("providerPublishTime")).strftime('%d.%m.%Y %H:%M')
+                        except:
+                            pub_time = "Dnes"
+                            
+                        st.markdown(f"**📌 {company_name} ({ticker_symbol})** | *{pub_time}* | Zdroj: {publisher}")
+                        st.markdown(f"[{title_news}]({link_news})")
+                        st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
+            except:
+                pass # Pokud selže načtení zpráv pro jeden ticker, přeskočíme ho
+                
+        if not found_any_news:
+            st.info("Momentálně nebyly nalezeny žádné specifické zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
         color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
