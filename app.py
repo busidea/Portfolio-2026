@@ -42,11 +42,10 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# Nová funkce pro stahování denního shrnutí trhu z Investičního webu
+# Funkce pro stahování denního shrnutí trhu z Investičního webu
 @st.cache_data(ttl=3600)
 def get_investicni_web_svodka():
     try:
-        # Použijeme RSS kanál Investičního webu
         req = urllib.request.Request(
             "https://www.investicniweb.cz/rss/all.xml", 
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -57,18 +56,22 @@ def get_investicni_web_svodka():
         feed = feedparser.parse(html_content)
         svodky = []
         
-        # Prohledáme nejnovější články a filtrujeme ty, které se týkají shrnutí obchodování v USA nebo na trzích
         for entry in feed.entries:
             title_lower = entry.title.lower()
             if "shrnutí obchodování v usa" in title_lower or "usa" in title_lower and "akcie" in title_lower:
-                # Očistíme text od případných HTML tagů v popisu
                 summary_clean = entry.summary.split('<')[0] if '<' in entry.summary else entry.summary
+                
+                # Zjednodušení názvu na přání uživatele
+                display_title = "Shrnutí obchodování v USA"
+                if " - " in entry.title:
+                    # Pokud obsahuje datum (např. "Shrnutí obchodování v USA - 5. 6."), zachováme ho
+                    display_title = f"Shrnutí obchodování v USA ({entry.title.split(' - ')[-1]})"
+
                 svodky.append({
-                    "title": entry.title,
+                    "title": display_title,
                     "summary": summary_clean.strip(),
                     "link": entry.link
                 })
-            # Chceme maximálně 3 nejnovější přehledy
             if len(svodky) >= 3:
                 break
                 
@@ -76,9 +79,8 @@ def get_investicni_web_svodka():
             return svodky
     except:
         pass
-    # Záložní varianta v případě výpadku RSS
     return [{
-        "title": "Shrnutí obchodování na Investičním webu", 
+        "title": "Shrnutí obchodování v USA", 
         "summary": "Odkaz přímo na kompletní výpis denních shrnutí amerických trhů.", 
         "link": "https://www.investicniweb.cz/tema/shrnuti-obchodovani-v-usa"
     }]
@@ -99,7 +101,7 @@ try:
     except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
 
     st.sidebar.title("💎 MENU")
-    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly and Poznámky", "📰 Tržní zprávy", "⚙️ Ostatní"])
+    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "📰 Tržní zprávy", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
@@ -217,7 +219,7 @@ try:
             st.plotly_chart(fig, use_container_width=True)
         else: st.warning("Nepodařilo se načíst historii pro vybraný index.")
 
-    elif page == "📋 Úkoly and Poznámky":
+    elif page == "📋 Úkoly a Poznámky":
         st.title("📋 Úkoly a Poznámky")
         st.subheader("📌 Obecné úkoly (s odpočtem termínu)")
         
@@ -267,10 +269,7 @@ try:
         else: st.info("Nemáte žádné specifické poznámky u akcií v prvním listu.")
 
     elif page == "📰 Tržní zprávy":
-        st.title("📰 Tržní zprávy a Svodky")
-        
         # --- SEKCE A: DENNÍ SHRNOTÍ TRHU (Investiční web) ---
-        st.subheader("☀️ Denní shrnutí obchodování v USA (Investiční web)")
         svodky = get_investicni_web_svodka()
         
         for svodka in svodky:
