@@ -4,7 +4,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import feedparser  # Knihovna pro čtení RSS kanálů (např. Patria.cz)
+import feedparser  # Knihovna pro čtení RSS kanálů
+import urllib.request # Pomocná knihovna pro simulaci prohlížeče
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
@@ -41,21 +42,32 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# Funkce pro načtení ranní svodky z Patria.cz
+# Opravená funkce pro načtení ranní svodky z Patria.cz s maskováním za prohlížeč
 @st.cache_data(ttl=3600)
 def get_patria_svodka():
     try:
-        feed = feedparser.parse("https://www.patria.cz/rss/rss.aspx")
-        # Hledáme nejrelevantnější ranní komentář nebo prostě nejnovější hlavní zprávu
+        req = urllib.request.Request(
+            "https://www.patria.cz/rss/rss.aspx", 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
+        with urllib.request.urlopen(req) as response:
+            html_content = response.read()
+        
+        feed = feedparser.parse(html_content)
+        
         for entry in feed.entries:
-            if any(x in entry.title.lower() for x in ["restart", "svodka", "zahájení", "přehled", "výhled"]):
+            if any(x in entry.title.lower() for x in ["restart", "svodka", "zahájení", "přehled", "výhled", "komentář"]):
                 return {"title": entry.title, "summary": entry.summary, "link": entry.link}
         if feed.entries:
             first = feed.entries[0]
             return {"title": first.title, "summary": first.summary, "link": first.link}
     except:
         pass
-    return {"title": "Svodka momentálně nedostupná", "summary": "Nepodařilo se připojit k RSS kanálu Patria.cz.", "link": "https://www.patria.cz"}
+    return {
+        "title": "Svodka momentálně nedostupná", 
+        "summary": "Nepodařilo se bezpečně připojit k serveru Patria.cz (Patria pravděpodobně zablokovala cloudový přístup).", 
+        "link": "https://www.patria.cz/akcie/skupina/1/komentare.html"
+    }
 
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
@@ -249,13 +261,14 @@ try:
         
         with st.container(border=True):
             st.markdown(f"#### 🌐 {svodka['title']}")
-            clean_summary = svodka['summary'].replace('<p>', '').replace('</p>', '').replace('<br />', '\n')
+            # Bezpečné ošetření textu
+            clean_summary = svodka['summary'].replace('<p>', '').replace('</p>', '').replace('<br />', '\n').replace('<br>', '\n')
             st.write(clean_summary)
             st.markdown(f"[Otevřít celý článek na Patria.cz]({svodka['link']})")
         
         st.divider()
         
-        # --- SEKCE B: ZPRÁVY PODLE VAŠEHO PORTFOLIA (Yahoo Finance v angličtině) ---
+        # --- SEKCE B: OPAVENÉ ČTENÍ ZPRÁV Z PORTFOLIA (Nové Yahoo Finance API) ---
         st.subheader("🎯 Zprávy ke společnostem ve vašem portfoliu")
         st.caption("Filtrováno automaticky podle tickerů, které reálně vlastníte. Zobrazují se maximálně 3 nejnovější zprávy pro každý titul.")
         
@@ -270,25 +283,48 @@ try:
                 news_list = ticker_obj.news
                 
                 if news_list:
-                    for item in news_list[:3]:
-                        found_any_news = True
-                        title_news = item.get("title", "Bez názvu")
-                        publisher = item.get("publisher", "Yahoo Finance")
-                        link_news = item.get("link", "#")
+                    # Pomocná proměnná pro zjištění, jestli daná akcie vypsala aspoň 1 platný článek
+                    printed_for_this_ticker = False 
+                    
+                    for item in news_list:
+                        # Ochrana: Nová struktura yfinance drží text pod klíčem "title" nebo vnořeně v "content"
+                        title_news = item.get("title")
+                        link_news = item.get("link")
                         
-                        try:
-                            pub_time = datetime.fromtimestamp(item.get("providerPublishTime")).strftime('%d.%m.%Y %H:%M')
-                        except:
-                            pub_time = "Dnes"
+                        # Pokud je to v nové vnořené struktuře z let 2025/2026:
+                        if not title_news and "content" in item:
+                            title_news = item["content"].get("title")
+                            link_news = item["content"].get("clickThroughUrl", {}).get("url") or item["content"].get("pubUrl")
+                        
+                        # Pokud článek nemá titulek ani odkaz, přeskočíme ho
+                        if not title_news or not link_news:
+                            continue
                             
+                        found_any_news = True
+                        printed_for_this_ticker = True
+                        
+                        publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
+                        
+                        # Získání času
+                        try:
+                            raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
+                            pub_time = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00")).strftime('%d.%m.%Y %H:%M') if "T" in str(raw_time) else datetime.fromtimestamp(int(raw_time)).strftime('%d.%m.%Y %H:%M')
+                        except:
+                            pub_time = "Aktuální"
+                        
+                        # Výpis konkrétní zprávy
                         st.markdown(f"**📌 {company_name} ({ticker_symbol})** | *{pub_time}* | Zdroj: {publisher}")
                         st.markdown(f"[{title_news}]({link_news})")
                         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
+                        
+                        # Omezíme výpis na maximálně 3 úspěšné články pro jeden konkrétní ticker
+                        if news_list.index(item) >= 3:
+                            break
             except:
                 pass
                 
         if not found_any_news:
-            st.info("Momentálně nebyly nalezeny žádné specifické zprávy pro vaše tituly.")
+            st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
         color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
