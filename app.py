@@ -325,11 +325,11 @@ try:
                 pass
                 
         if all_portfolio_news:
-            # Seřadíme všechny zprávy napříč portfoliem od nejnovější (nejvyšší timestamp) po nejstarší
+            # Seřadíme všechny zprávy napříč portfoliem od nejnovější po nejstarší
             all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
             
-            # Zobrazíme maximálně 15 nejnovějších zpráv, zbytek starších odpadne
-            for news in all_portfolio_news[:15]:
+            # Zobrazíme až 100 nejnovějších zpráv pro dostatečné pokrytí celého dne a méně medializovaných firem
+            for news in all_portfolio_news[:100]:
                 try:
                     pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
                 except:
