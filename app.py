@@ -48,10 +48,8 @@ def get_patria_svodka():
         feed = feedparser.parse("https://www.patria.cz/rss/rss.aspx")
         # Hledáme nejrelevantnější ranní komentář nebo prostě nejnovější hlavní zprávu
         for entry in feed.entries:
-            # Patria dává ranní svodky často s těmito klíčovými slovy
             if any(x in entry.title.lower() for x in ["restart", "svodka", "zahájení", "přehled", "výhled"]):
                 return {"title": entry.title, "summary": entry.summary, "link": entry.link}
-        # Pokud nenašel specificky ranní, vezme prostě první (nejnovější) zprávu dne
         if feed.entries:
             first = feed.entries[0]
             return {"title": first.title, "summary": first.summary, "link": first.link}
@@ -186,7 +184,7 @@ try:
             for _, r in df_p.iterrows():
                 if not r["History"].empty:
                     h = r["History"].reindex(idx_h.index, method='ffill')
-                    if not h.empty vibrat and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
+                    if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
                         port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
                         if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
             fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
@@ -251,7 +249,6 @@ try:
         
         with st.container(border=True):
             st.markdown(f"#### 🌐 {svodka['title']}")
-            # Vyčištění HTML značek, pokud by je Patria v RSS posílala
             clean_summary = svodka['summary'].replace('<p>', '').replace('</p>', '').replace('<br />', '\n')
             st.write(clean_summary)
             st.markdown(f"[Otevřít celý článek na Patria.cz]({svodka['link']})")
@@ -264,7 +261,6 @@ try:
         
         found_any_news = False
         
-        # Procházíme unikátní tituly z portfolia
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
             ticker_symbol = row_p["Ticker"]
             company_name = row_p["Název"]
@@ -274,14 +270,12 @@ try:
                 news_list = ticker_obj.news
                 
                 if news_list:
-                    # Vezmeme max 3 zprávy, aby nebyl uživatel zahlcen
                     for item in news_list[:3]:
                         found_any_news = True
                         title_news = item.get("title", "Bez názvu")
                         publisher = item.get("publisher", "Yahoo Finance")
                         link_news = item.get("link", "#")
                         
-                        # Pokus o převedení času vydání na čitelný formát
                         try:
                             pub_time = datetime.fromtimestamp(item.get("providerPublishTime")).strftime('%d.%m.%Y %H:%M')
                         except:
@@ -291,7 +285,7 @@ try:
                         st.markdown(f"[{title_news}]({link_news})")
                         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
             except:
-                pass # Pokud selže načtení zpráv pro jeden ticker, přeskočíme ho
+                pass
                 
         if not found_any_news:
             st.info("Momentálně nebyly nalezeny žádné specifické zprávy pro vaše tituly.")
