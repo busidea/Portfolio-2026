@@ -61,10 +61,8 @@ def get_investicni_web_svodka():
             if "shrnutí obchodování v usa" in title_lower or "usa" in title_lower and "akcie" in title_lower:
                 summary_clean = entry.summary.split('<')[0] if '<' in entry.summary else entry.summary
                 
-                # Zjednodušení názvu na přání uživatele
                 display_title = "Shrnutí obchodování v USA"
                 if " - " in entry.title:
-                    # Pokud obsahuje datum (např. "Shrnutí obchodování v USA - 5. 6."), zachováme ho
                     display_title = f"Shrnutí obchodování v USA ({entry.title.split(' - ')[-1]})"
 
                 svodky.append({
@@ -271,7 +269,6 @@ try:
     elif page == "📰 Tržní zprávy":
         # --- SEKCE A: DENNÍ SHRNOTÍ TRHU (Investiční web) ---
         svodky = get_investicni_web_svodka()
-        
         for svodka in svodky:
             with st.container(border=True):
                 st.markdown(f"#### 🌐 {svodka['title']}")
@@ -280,10 +277,7 @@ try:
         
         st.divider()
         
-        # --- SEKCE B: ZPRÁVY KE SPOLEČNOSTEM V PORTFOLIU (Yahoo Finance) ---
-        st.subheader("🎯 Zprávy ke společnostem ve vašem portfoliu")
-        st.caption("Filtrováno automaticky podle tickerů, které reálně vlastníte. Zobrazují se maximálně 3 nejnovější zprávy pro každý titul.")
-        
+        # --- SEKCE B: ZPRÁVY Z PORTFOLIA (Kompaktní verze Yahoo Finance) ---
         found_any_news = False
         
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
@@ -319,9 +313,9 @@ try:
                         except:
                             pub_time = "Aktuální"
                         
-                        st.markdown(f"**📌 {company_name} ({ticker_symbol})** | *{pub_time}* | Zdroj: {publisher}")
+                        # Kompaktní výpis: Společnost a detaily na jednom řádku, hned pod tím odkaz, bez prázdných mezer
+                        st.markdown(f"📌 **{company_name} ({ticker_symbol})** | *{pub_time}* | *Zdroj: {publisher}*")
                         st.markdown(f"[{title_news}]({link_news})")
-                        st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
                         
                         if printed_for_this_ticker >= 3:
                             break
