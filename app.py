@@ -42,32 +42,46 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# Opravená funkce pro načtení ranní svodky z Patria.cz s maskováním za prohlížeč
+# Nová funkce pro stahování denního shrnutí trhu z Investičního webu
 @st.cache_data(ttl=3600)
-def get_patria_svodka():
+def get_investicni_web_svodka():
     try:
+        # Použijeme RSS kanál Investičního webu
         req = urllib.request.Request(
-            "https://www.patria.cz/rss/rss.aspx", 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            "https://www.investicniweb.cz/rss/all.xml", 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         )
         with urllib.request.urlopen(req) as response:
             html_content = response.read()
         
         feed = feedparser.parse(html_content)
+        svodky = []
         
+        # Prohledáme nejnovější články a filtrujeme ty, které se týkají shrnutí obchodování v USA nebo na trzích
         for entry in feed.entries:
-            if any(x in entry.title.lower() for x in ["restart", "svodka", "zahájení", "přehled", "výhled", "komentář"]):
-                return {"title": entry.title, "summary": entry.summary, "link": entry.link}
-        if feed.entries:
-            first = feed.entries[0]
-            return {"title": first.title, "summary": first.summary, "link": first.link}
+            title_lower = entry.title.lower()
+            if "shrnutí obchodování v usa" in title_lower or "usa" in title_lower and "akcie" in title_lower:
+                # Očistíme text od případných HTML tagů v popisu
+                summary_clean = entry.summary.split('<')[0] if '<' in entry.summary else entry.summary
+                svodky.append({
+                    "title": entry.title,
+                    "summary": summary_clean.strip(),
+                    "link": entry.link
+                })
+            # Chceme maximálně 3 nejnovější přehledy
+            if len(svodky) >= 3:
+                break
+                
+        if svodky:
+            return svodky
     except:
         pass
-    return {
-        "title": "Svodka momentálně nedostupná", 
-        "summary": "Nepodařilo se bezpečně připojit k serveru Patria.cz (Patria pravděpodobně zablokovala cloudový přístup).", 
-        "link": "https://www.patria.cz/akcie/skupina/1/komentare.html"
-    }
+    # Záložní varianta v případě výpadku RSS
+    return [{
+        "title": "Shrnutí obchodování na Investičním webu", 
+        "summary": "Odkaz přímo na kompletní výpis denních shrnutí amerických trhů.", 
+        "link": "https://www.investicniweb.cz/tema/shrnuti-obchodovani-v-usa"
+    }]
 
 # --- 2. LOGIKA & NAČÍTÁNÍ DAT ---
 SHEET_ID = "1LBQNzIofAltQvixIyWgBCutwYNZNSHv740hyaMICWkA"
@@ -85,7 +99,7 @@ try:
     except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
 
     st.sidebar.title("💎 MENU")
-    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "📰 Tržní zprávy", "⚙️ Ostatní"])
+    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly and Poznámky", "📰 Tržní zprávy", "⚙️ Ostatní"])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
@@ -203,7 +217,7 @@ try:
             st.plotly_chart(fig, use_container_width=True)
         else: st.warning("Nepodařilo se načíst historii pro vybraný index.")
 
-    elif page == "📋 Úkoly a Poznámky":
+    elif page == "📋 Úkoly and Poznámky":
         st.title("📋 Úkoly a Poznámky")
         st.subheader("📌 Obecné úkoly (s odpočtem termínu)")
         
@@ -255,20 +269,19 @@ try:
     elif page == "📰 Tržní zprávy":
         st.title("📰 Tržní zprávy a Svodky")
         
-        # --- SEKCE A: RANNÍ SVODKA (Patria.cz v češtině) ---
-        st.subheader("☀️ Hlavní ranní svodka trhu (Patria.cz)")
-        svodka = get_patria_svodka()
+        # --- SEKCE A: DENNÍ SHRNOTÍ TRHU (Investiční web) ---
+        st.subheader("☀️ Denní shrnutí obchodování v USA (Investiční web)")
+        svodky = get_investicni_web_svodka()
         
-        with st.container(border=True):
-            st.markdown(f"#### 🌐 {svodka['title']}")
-            # Bezpečné ošetření textu
-            clean_summary = svodka['summary'].replace('<p>', '').replace('</p>', '').replace('<br />', '\n').replace('<br>', '\n')
-            st.write(clean_summary)
-            st.markdown(f"[Otevřít celý článek na Patria.cz]({svodka['link']})")
+        for svodka in svodky:
+            with st.container(border=True):
+                st.markdown(f"#### 🌐 {svodka['title']}")
+                st.write(svodka['summary'])
+                st.markdown(f"[Přečíst celý článek na Investičním webu]({svodka['link']})")
         
         st.divider()
         
-        # --- SEKCE B: OPAVENÉ ČTENÍ ZPRÁV Z PORTFOLIA (Nové Yahoo Finance API) ---
+        # --- SEKCE B: ZPRÁVY KE SPOLEČNOSTEM V PORTFOLIU (Yahoo Finance) ---
         st.subheader("🎯 Zprávy ke společnostem ve vašem portfoliu")
         st.caption("Filtrováno automaticky podle tickerů, které reálně vlastníte. Zobrazují se maximálně 3 nejnovější zprávy pro každý titul.")
         
@@ -283,42 +296,35 @@ try:
                 news_list = ticker_obj.news
                 
                 if news_list:
-                    # Pomocná proměnná pro zjištění, jestli daná akcie vypsala aspoň 1 platný článek
-                    printed_for_this_ticker = False 
+                    printed_for_this_ticker = 0 
                     
                     for item in news_list:
-                        # Ochrana: Nová struktura yfinance drží text pod klíčem "title" nebo vnořeně v "content"
                         title_news = item.get("title")
                         link_news = item.get("link")
                         
-                        # Pokud je to v nové vnořené struktuře z let 2025/2026:
                         if not title_news and "content" in item:
                             title_news = item["content"].get("title")
                             link_news = item["content"].get("clickThroughUrl", {}).get("url") or item["content"].get("pubUrl")
                         
-                        # Pokud článek nemá titulek ani odkaz, přeskočíme ho
                         if not title_news or not link_news:
                             continue
                             
                         found_any_news = True
-                        printed_for_this_ticker = True
+                        printed_for_this_ticker += 1
                         
                         publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
                         
-                        # Získání času
                         try:
                             raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
                             pub_time = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00")).strftime('%d.%m.%Y %H:%M') if "T" in str(raw_time) else datetime.fromtimestamp(int(raw_time)).strftime('%d.%m.%Y %H:%M')
                         except:
                             pub_time = "Aktuální"
                         
-                        # Výpis konkrétní zprávy
                         st.markdown(f"**📌 {company_name} ({ticker_symbol})** | *{pub_time}* | Zdroj: {publisher}")
                         st.markdown(f"[{title_news}]({link_news})")
                         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
                         
-                        # Omezíme výpis na maximálně 3 úspěšné články pro jeden konkrétní ticker
-                        if news_list.index(item) >= 3:
+                        if printed_for_this_ticker >= 3:
                             break
             except:
                 pass
