@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import feedparser  # Knihovna pro čtení RSS kanálů
 import urllib.request # Pomocná knihovna pro simulaci prohlížeče
+import google.generativeai as genai  # Oficiální knihovna pro Google Gemini AI
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
@@ -276,10 +277,35 @@ try:
                 st.markdown(f"[Přečíst celý článek na Investičním webu]({svodka['link']})")
         
         st.divider()
+
+        # --- SEKCE: SITUACE DLE AI (ROZBALOVACÍ PANEL) ---
+        with st.expander("🤖 Situace na trzích dle AI"):
+            # Kontrola existence klíče v nastavení aplikace
+            if "GEMINI_API_KEY" in st.secrets:
+                if st.button("Spustit analýzu aktuálního dění"):
+                    with st.spinner("Gemini analyzuje trhy a sepisuje přehled..."):
+                        try:
+                            # Konfigurace a vyvolání modelu Gemini 1.5 Flash
+                            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                            model = genai.GenerativeModel('gemini-1.5-flash')
+                            
+                            prompt = (
+                                "Dění na trhu: Shrň mi aktuální dění na kapitálových (akciových) trzích v posledních 24 hodinách. "
+                                "Pokus se charakterizovat sentiment investorů a výhledy pro nejbližší budoucnost. "
+                                "Odpovídej v českém jazyce, přehledně, strukturovaně, profesionálním tónem a používej odrážky."
+                            )
+                            
+                            response = model.generate_content(prompt)
+                            st.markdown(response.text)
+                        except Exception as ai_err:
+                            st.error(f"Při komunikaci s AI došlo k chybě: {ai_err}")
+            else:
+                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit (Secrets) nastavit klíč `GEMINI_API_KEY` podle návodu.")
+        
+        st.divider()
         
         # --- SEKCE B: KOMBINOVANÉ ZPRÁVY Z PORTFOLIA ŘAZENÉ PODLE ČASU ---
         all_portfolio_news = []
-        
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
             ticker_symbol = row_p["Ticker"]
             company_name = row_p["Název"]
@@ -287,53 +313,36 @@ try:
             try:
                 ticker_obj = yf.Ticker(ticker_symbol)
                 news_list = ticker_obj.news
-                
                 if news_list:
                     for item in news_list:
                         title_news = item.get("title")
                         link_news = item.get("link")
-                        
                         if not title_news and "content" in item:
                             title_news = item["content"].get("title")
                             link_news = item["content"].get("clickThroughUrl", {}).get("url") or item["content"].get("pubUrl")
                         
-                        if not title_news or not link_news:
-                            continue
-                            
+                        if not title_news or not link_news: continue
                         publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
                         
-                        # Extrakce Unix timestamp pro potřeby řazení
                         try:
                             raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
                             if "T" in str(raw_time):
                                 dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
                                 timestamp = int(dt_obj.timestamp())
-                            else:
-                                timestamp = int(raw_time)
-                        except:
-                            timestamp = 0
+                            else: timestamp = int(raw_time)
+                        except: timestamp = 0
                             
                         all_portfolio_news.append({
-                            "company": company_name,
-                            "ticker": ticker_symbol,
-                            "title": title_news,
-                            "link": link_news,
-                            "publisher": publisher,
-                            "timestamp": timestamp
+                            "company": company_name, "ticker": ticker_symbol, "title": title_news,
+                            "link": link_news, "publisher": publisher, "timestamp": timestamp
                         })
-            except:
-                pass
+            except: pass
                 
         if all_portfolio_news:
-            # Seřadíme všechny zprávy napříč portfoliem od nejnovější po nejstarší
             all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
-            
-            # Zobrazíme až 100 nejnovějších zpráv pro dostatečné pokrytí celého dne a méně medializovaných firem
             for news in all_portfolio_news[:100]:
-                try:
-                    pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
-                except:
-                    pub_time = "Aktuální"
+                try: pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
+                except: pub_time = "Aktuální"
                     
                 st.markdown(f"📌 **{news['company']} ({news['ticker']})** | *{pub_time}* | *Zdroj: {news['publisher']}*")
                 st.markdown(f"[{news['title']}]({news['link']})")
