@@ -280,14 +280,12 @@ try:
 
         # --- SEKCE: SITUACE DLE AI (ROZBALOVACÍ PANEL) ---
         with st.expander("🤖 Situace na trzích dle AI"):
-            # Kontrola existence klíče v nastavení aplikace
             if "GEMINI_API_KEY" in st.secrets:
                 if st.button("Spustit analýzu aktuálního dění"):
                     with st.spinner("Gemini analyzuje trhy a sepisuje přehled..."):
                         try:
-                            # Konfigurace a vyvolání modelu Gemini 1.5 Flash
+                            # Inicializace API klíče
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                            model = genai.GenerativeModel('gemini-1.5-flash')
                             
                             prompt = (
                                 "Dění na trhu: Shrň mi aktuální dění na kapitálových (akciových) trzích v posledních 24 hodinách. "
@@ -295,7 +293,15 @@ try:
                                 "Odpovídej v českém jazyce, přehledně, strukturovaně, profesionálním tónem a používej odrážky."
                             )
                             
-                            response = model.generate_content(prompt)
+                            # Oprava: Voláme nejnovější univerzální produkční model 'gemini-2.5-flash'
+                            try:
+                                model = genai.GenerativeModel('gemini-2.5-flash')
+                                response = model.generate_content(prompt)
+                            except:
+                                # Záložní varianta pro starší verze knihovny na serveru (odstranění prefixu 'models/')
+                                model = genai.GenerativeModel('2.5-flash')
+                                response = model.generate_content(prompt)
+                                
                             st.markdown(response.text)
                         except Exception as ai_err:
                             st.error(f"Při komunikaci s AI došlo k chybě: {ai_err}")
