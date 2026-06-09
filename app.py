@@ -293,14 +293,9 @@ try:
                                 "Odpovídej v českém jazyce, přehledně, strukturovaně, profesionálním tónem a používej odrážky."
                             )
                             
-                            # Oprava: Voláme nejnovější univerzální produkční model 'gemini-2.5-flash'
-                            try:
-                                model = genai.GenerativeModel('gemini-2.5-flash')
-                                response = model.generate_content(prompt)
-                            except:
-                                # Záložní varianta pro starší verze knihovny na serveru (odstranění prefixu 'models/')
-                                model = genai.GenerativeModel('2.5-flash')
-                                response = model.generate_content(prompt)
+                            # Použití čistého, stabilního názvu bez jakýchkoliv prefixů
+                            model = genai.GenerativeModel('gemini-2.5-flash')
+                            response = model.generate_content(prompt)
                                 
                             st.markdown(response.text)
                         except Exception as ai_err:
