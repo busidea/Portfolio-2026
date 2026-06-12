@@ -282,18 +282,24 @@ try:
         with st.expander("🤖 Situace na trzích dle AI"):
             if "GEMINI_API_KEY" in st.secrets:
                 if st.button("Spustit analýzu aktuálního dění"):
-                    with st.spinner("Gemini analyzuje trhy a sepisuje přehled..."):
+                    with st.spinner("Gemini prohledává internet a sestavuje čerstvou analýzu..."):
                         try:
                             # Inicializace API klíče
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                             
+                            # Zjistíme přesný dnešní čas aplikace, abychom ho předali AI jako pevnou kotvu
+                            now_str = datetime.now().strftime("%d.%m.%Y v %H:%M")
+                            
                             prompt = (
-                                "Dění na trhu: Shrň mi aktuální dění na kapitálových (akciových) trzích v posledních 24 hodinách. "
-                                "Pokus se charakterizovat sentiment investorů a výhledy pro nejbližší budoucnost. "
-                                "Odpovídej v českém jazyce, přehledně, strukturovaně, profesionálním tónem a používej odrážky."
+                                f"Dnešní datum a přesný čas je: {now_str}. Tvým úkolem je udělat aktuální a faktické shrnutí dění na akciových trzích. "
+                                "Uplatni tato ZÁVAZNÁ pravidla:\n"
+                                f"1. NA PRVNÍ ŘÁDEK napiš tučně: 'Analýza vygenerována dne: {now_str}' a uveď, k jakému dni/období data na trzích reálně patří.\n"
+                                "2. Buď konkrétní a věcný. Vyhni se vágním frázím o volatilitě a makrodatech. Pokud mluvíš o zprávách, uveď konkrétní událost, jméno firmy nebo report, který vyšel.\n"
+                                "3. Uveď reálná čísla nebo přibližný vývoj hlavních indexů (S&P 500, NASDAQ, DAX) za poslední uzavřenou obchodní seanci.\n"
+                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdnem.\n"
+                                "Odpovídej kompletně v českém jazyce, přehledně, strukturovaně s využitím odrážek a profesionálním tónem."
                             )
                             
-                            # Použití čistého, stabilního názvu bez jakýchkoliv prefixů
                             model = genai.GenerativeModel('gemini-2.5-flash')
                             response = model.generate_content(prompt)
                                 
