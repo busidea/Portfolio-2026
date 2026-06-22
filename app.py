@@ -146,6 +146,10 @@ try:
                 except: earn_dt_str = raw_val
         
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
+        
+        # Ošetření sloupců Obor a Podobor (pokud by v tabulce chyběly, dáme neurčeno)
+        obor_val = str(r['Obor']).strip() if 'Obor' in r and pd.notna(r['Obor']) else "Neurčeno"
+        podobor_val = str(r['Podobor']).strip() if 'Podobor' in r and pd.notna(r['Podobor']) else "Neurčeno"
 
         processed.append({
             "Ticker": t, "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
@@ -153,6 +157,7 @@ try:
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
             "Poznámka": poznamka_val,
+            "Obor": obor_val, "Podobor": podobor_val,
             "History": hist, "RefPrice": ref_price,
             "Měna": str(r["Měna"]).strip()
         })
@@ -194,9 +199,11 @@ try:
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
     elif page == "🖼️ Grafika":
-        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='CZK')
-        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
-        fig.update_layout(height=800)
+        st.subheader("🖼️ Struktura portfolia podle oborů a podoborů")
+        # Vytvoření hierarchického grafu: Portfolio -> Obor -> Podobor -> Název společnosti
+        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Obor', 'Podobor', 'Název'], values='CZK')
+        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentParent:.1%} z větve<br>%{percentRoot:.1%} z celku")
+        fig.update_layout(height=850, margin=dict(t=30, l=10, r=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
 
     elif page == "📈 Výkonnost":
@@ -282,12 +289,9 @@ try:
         with st.expander("🤖 Situace na trzích dle AI"):
             if "GEMINI_API_KEY" in st.secrets:
                 if st.button("Spustit analýzu aktuálního dění"):
-                    with st.spinner("Gemini prohledává internet a sestavuje čerstvou analýzu..."):
+                    with st.spinner("Gemini prohledává internet and sestavuje čerstvou analýzu..."):
                         try:
-                            # Inicializace API klíče
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                            
-                            # Zjistíme přesný dnešní čas aplikace, abychom ho předali AI jako pevnou kotvu
                             now_str = datetime.now().strftime("%d.%m.%Y v %H:%M")
                             
                             prompt = (
