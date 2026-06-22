@@ -200,14 +200,24 @@ try:
     elif page == "🖼️ Grafika":
         st.subheader("🖼️ Struktura portfolia podle hlavních oborů")
         
-        # Členění pouze: Portfolio -> Obor -> Název. 
-        # color='Obor' aktivuje barvy podle sektorů, color_discrete_sequence nastavuje pestrou paletu
+        # Kompletní oprava barev: Vynutíme jednoznačné mapování barev na základě sloupce Obor
         fig = px.treemap(
             df_p, 
             path=[px.Constant("Portfolio"), 'Obor', 'Název'], 
             values='CZK',
             color='Obor',
-            color_discrete_sequence=px.colors.qualitative.Safe
+            color_discrete_map={
+                'Technologie': '#9c27b0',      # Fialová
+                'Finance': '#2e7d32',          # Zelená
+                'Energetika': '#ff9100',       # Oranžová
+                'Průmysl': '#37474f',          # Šedá/Tmavá
+                'Zdravotnictví': '#e91e63',    # Růžová
+                'ETF / Indexy': '#0288d1',     # Modrá
+                'Doprava': '#00aec5',          # Tyrkysová
+                'Stavebnictví': '#8d6e63',     # Hnědá
+                'Média': '#ffeb3b',            # Žlutá
+                'Neurčeno': '#757575'          # Světle šedá
+            }
         )
         
         fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentParent:.1%} ze sektoru<br>%{percentRoot:.1%} z celku")
@@ -308,71 +318,4 @@ try:
                                 f"1. NA PRVNÍ ŘÁDEK napiš tučně: 'Analýza vygenerována dne: {now_str}' a uveď, k jakému dni/období data na trzích reálně patří.\n"
                                 "2. Buď konkrétní a věcný. Vyhni se vágním frázím o volatilitě a makrodatech. Pokud mluvíš o zprávách, uveď konkrétní událost, jméno firmy nebo report, který vyšel.\n"
                                 "3. Uveď reálná čísla nebo přibližný vývoj hlavních indexů (S&P 500, NASDAQ, DAX) za poslední uzavřenou obchodní seanci.\n"
-                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdem.\n"
-                                "Odpovídej kompletně v českém jazyce, přehledně, strukturovaně s využitím odrážek and profesionálním tónem."
-                            )
-                            
-                            model = genai.GenerativeModel('gemini-2.5-flash')
-                            response = model.generate_content(prompt)
-                                
-                            st.markdown(response.text)
-                        except Exception as ai_err:
-                            st.error(f"Při komunikaci s AI došlo k chybě: {ai_err}")
-            else:
-                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit (Secrets) nastavit klíč `GEMINI_API_KEY` podle návodu.")
-        
-        st.divider()
-        
-        # --- SEKCE B: KOMBINOVANÉ ZPRÁVY Z PORTFOLIA ŘAZENÉ PODLE ČASU ---
-        all_portfolio_news = []
-        for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
-            ticker_symbol = row_p["Ticker"]
-            company_name = row_p["Název"]
-            
-            try:
-                ticker_obj = yf.Ticker(ticker_symbol)
-                news_list = ticker_obj.news
-                if news_list:
-                    for item in news_list:
-                        title_news = item.get("title")
-                        link_news = item.get("link")
-                        if not title_news and "content" in item:
-                            title_news = item["content"].get("title")
-                            link_news = item["content"].get("clickThroughUrl", {}).get("url") or item["content"].get("pubUrl")
-                        
-                        if not title_news or not link_news: continue
-                        publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
-                        
-                        try:
-                            raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
-                            if "T" in str(raw_time):
-                                dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
-                                timestamp = int(dt_obj.timestamp())
-                            else: timestamp = int(raw_time)
-                        except: timestamp = 0
-                            
-                        all_portfolio_news.append({
-                            "company": company_name, "ticker": ticker_symbol, "title": title_news,
-                            "link": link_news, "publisher": publisher, "timestamp": timestamp
-                        })
-            except: pass
-                
-        if all_portfolio_news:
-            all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
-            for news in all_portfolio_news[:100]:
-                try: pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
-                except: pub_time = "Aktuální"
-                    
-                st.markdown(f"📌 **{news['company']} ({news['ticker']})** | *{pub_time}* | *Zdroj: {news['publisher']}*")
-                st.markdown(f"[{news['title']}]({news['link']})")
-        else:
-            st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
-
-    elif page == "⚙️ Ostatní":
-        color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
-        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='CZK', color='Měna', color_discrete_map=color_map)
-        fig.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
-        fig.update_layout(height=700)
-        st.plotly_chart(fig, use_container_width=True)
-        
-except Exception as e: st.error(f"Kritická chyba: {e}")
+                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které h
