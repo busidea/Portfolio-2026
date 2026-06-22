@@ -146,9 +146,6 @@ try:
                 except: earn_dt_str = raw_val
         
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
-        
-        # Ošetření sloupce Obor (pokud by v tabulce chyběl, dáme neurčeno)
-        obor_val = str(r['Obor']).strip() if 'Obor' in r and pd.notna(r['Obor']) else "Neurčeno"
 
         processed.append({
             "Ticker": t, "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
@@ -156,7 +153,6 @@ try:
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
             "Poznámka": poznamka_val,
-            "Obor": obor_val,
             "History": hist, "RefPrice": ref_price,
             "Měna": str(r["Měna"]).strip()
         })
@@ -198,23 +194,9 @@ try:
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
     elif page == "🖼️ Grafika":
-        st.subheader("🖼️ Struktura portfolia podle oborů a firem")
-        
-        # Použijeme px.treemap s definovaným color='Obor' a paletou barev, která jasně oddělí sekce
-        fig = px.treemap(
-            df_p, 
-            path=['Obor', 'Název'], 
-            values='CZK',
-            color='Obor',
-            color_discrete_sequence=px.colors.qualitative.Bold
-        )
-        
-        # %{percentRoot:.1%} zajistí, že se zobrazuje VŽDY podíl z CELÉHO portfolia, jak u oboru, tak u firmy
-        fig.update_traces(
-            texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%} z celku",
-            hovertemplate="<b>%{label}</b><br>Hodnota: %{value:,.0f} CZK<br>Podíl na portfoliu: %{percentRoot:.1%}"
-        )
-        fig.update_layout(height=850, margin=dict(t=30, l=10, r=10, b=10))
+        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='CZK')
+        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
+        fig.update_layout(height=800)
         st.plotly_chart(fig, use_container_width=True)
 
     elif page == "📈 Výkonnost":
@@ -302,7 +284,10 @@ try:
                 if st.button("Spustit analýzu aktuálního dění"):
                     with st.spinner("Gemini prohledává internet a sestavuje čerstvou analýzu..."):
                         try:
+                            # Inicializace API klíče
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                            
+                            # Zjistíme přesný dnešní čas aplikace, abychom ho předali AI jako pevnou kotvu
                             now_str = datetime.now().strftime("%d.%m.%Y v %H:%M")
                             
                             prompt = (
@@ -311,7 +296,7 @@ try:
                                 f"1. NA PRVNÍ ŘÁDEK napiš tučně: 'Analýza vygenerována dne: {now_str}' a uveď, k jakému dni/období data na trzích reálně patří.\n"
                                 "2. Buď konkrétní a věcný. Vyhni se vágním frázím o volatilitě a makrodatech. Pokud mluvíš o zprávách, uveď konkrétní událost, jméno firmy nebo report, který vyšel.\n"
                                 "3. Uveď reálná čísla nebo přibližný vývoj hlavních indexů (S&P 500, NASDAQ, DAX) za poslední uzavřenou obchodní seanci.\n"
-                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdem.\n"
+                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdnem.\n"
                                 "Odpovídej kompletně v českém jazyce, přehledně, strukturovaně s využitím odrážek a profesionálním tónem."
                             )
                             
