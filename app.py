@@ -198,29 +198,22 @@ try:
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
     elif page == "🖼️ Grafika":
-        st.subheader("🖼️ Struktura portfolia podle hlavních oborů")
+        st.subheader("🖼️ Struktura portfolia podle oborů a firem")
         
-        # Kompletní oprava barev: Vynutíme jednoznačné mapování barev na základě sloupce Obor
+        # Použijeme px.treemap s definovaným color='Obor' a paletou barev, která jasně oddělí sekce
         fig = px.treemap(
             df_p, 
-            path=[px.Constant("Portfolio"), 'Obor', 'Název'], 
+            path=['Obor', 'Název'], 
             values='CZK',
             color='Obor',
-            color_discrete_map={
-                'Technologie': '#9c27b0',      # Fialová
-                'Finance': '#2e7d32',          # Zelená
-                'Energetika': '#ff9100',       # Oranžová
-                'Průmysl': '#37474f',          # Šedá/Tmavá
-                'Zdravotnictví': '#e91e63',    # Růžová
-                'ETF / Indexy': '#0288d1',     # Modrá
-                'Doprava': '#00aec5',          # Tyrkysová
-                'Stavebnictví': '#8d6e63',     # Hnědá
-                'Média': '#ffeb3b',            # Žlutá
-                'Neurčeno': '#757575'          # Světle šedá
-            }
+            color_discrete_sequence=px.colors.qualitative.Bold
         )
         
-        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentParent:.1%} ze sektoru<br>%{percentRoot:.1%} z celku")
+        # %{percentRoot:.1%} zajistí, že se zobrazuje VŽDY podíl z CELÉHO portfolia, jak u oboru, tak u firmy
+        fig.update_traces(
+            texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%} z celku",
+            hovertemplate="<b>%{label}</b><br>Hodnota: %{value:,.0f} CZK<br>Podíl na portfoliu: %{percentRoot:.1%}"
+        )
         fig.update_layout(height=850, margin=dict(t=30, l=10, r=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
 
