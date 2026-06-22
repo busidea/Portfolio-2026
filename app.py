@@ -236,4 +236,153 @@ try:
             for _, r in df_p.iterrows():
                 if not r["History"].empty:
                     h = r["History"].reindex(idx_h.index, method='ffill')
-                    if not h.empty and
+                    if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
+                        port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
+                        if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
+            fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
+            st.plotly_chart(fig, use_container_width=True)
+        else: st.warning("Nepodařilo se načíst historii pro vybraný index.")
+
+    elif page == "📋 Úkoly a Poznámky":
+        st.title("📋 Úkoly a Poznámky")
+        st.subheader("📌 Obecné úkoly (s odpočtem termínu)")
+        
+        if not df_ukoly_raw.empty:
+            if "Úkol" not in df_ukoly_raw.columns and len(df_ukoly_raw.columns) > 0:
+                df_ukoly_raw.rename(columns={df_ukoly_raw.columns[0]: "Úkol"}, inplace=True)
+            if len(df_ukoly_raw.columns) > 1 and "Termín" not in df_ukoly_raw.columns:
+                df_ukoly_raw.rename(columns={df_ukoly_raw.columns[1]: "Termín"}, inplace=True)
+
+            df_ukoly = df_ukoly_raw.dropna(subset=["Úkol"]).copy()
+            processed_ukoly = []
+            for _, row_u in df_ukoly.iterrows():
+                u_text = str(row_u["Úkol"]).strip()
+                u_date_str = "-"
+                u_days_to = "-"
+                if "Termín" in df_ukoly.columns and pd.notna(row_u["Termín"]):
+                    raw_date = str(row_u["Termín"]).strip()
+                    if raw_date and raw_date != "-":
+                        try:
+                            parsed_u_date = pd.to_datetime(raw_date, dayfirst=True).date()
+                            u_date_str = parsed_u_date.strftime('%d.%m.%Y')
+                            u_days_to = (parsed_u_date - today).days
+                        except: u_date_str = raw_date
+                processed_ukoly.append({"Úkol": u_text, "Termín": u_date_str, "Dní do termínu": u_days_to})
+            
+            df_ukoly_final = pd.DataFrame(processed_ukoly)
+            df_ukoly_final["sort_key"] = df_ukoly_final["Dní do termínu"].apply(lambda x: x if isinstance(x, int) else 999999)
+            df_ukoly_final = df_ukoly_final.sort_values("sort_key").drop(columns=["sort_key"])
+
+            def style_ukoly_rows(row):
+                styles = [''] * len(row)
+                try:
+                    days = int(row['Dní do termínu'])
+                    if days < 0: styles[2] = 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold; text-align: center;'
+                    elif days <= 7: styles[2] = 'background-color: #ffe0b2; color: #e65100; font-weight: bold; text-align: center;'
+                    else: styles[2] = 'background-color: #e8f5e9; color: #2e7d32; text-align: center;'
+                except: styles[2] = 'text-align: center;'
+                return styles
+
+            st.dataframe(df_ukoly_final.style.apply(style_ukoly_rows, axis=1).format({"Dní do termínu": lambda x: f"{x}" if isinstance(x, int) else "-"}), use_container_width=True, hide_index=True)
+        else: st.info("V tabulce úkolů nemáte žádné záznamy.")
+            
+        st.divider()
+        st.subheader("🔍 Poznámky ke konkrétním titulům")
+        df_notes_only = df_p[df_p["Poznámka"] != "-"][["Název", "Poznámka"]].copy()
+        if not df_notes_only.empty: st.dataframe(df_notes_only, use_container_width=True, hide_index=True)
+        else: st.info("Nemáte žádné specifické poznámky u akcií v prvním listu.")
+
+    elif page == "📰 Tržní zprávy":
+        # --- SEKCE A: DENNÍ SHRNOTÍ TRHU (Investiční web) ---
+        svodky = get_investicni_web_svodka()
+        for svodka in svodky:
+            with st.container(border=True):
+                st.markdown(f"#### 🌐 {svodka['title']}")
+                st.write(svodka['summary'])
+                st.markdown(f"[Přečíst celý článek na Investičním webu]({svodka['link']})")
+        
+        st.divider()
+
+        # --- SEKCE: SITUACE DLE AI (ROZBALOVACÍ PANEL) ---
+        with st.expander("🤖 Situace na trzích dle AI"):
+            if "GEMINI_API_KEY" in st.secrets:
+                if st.button("Spustit analýzu aktuálního dění"):
+                    with st.spinner("Gemini prohledává internet a sestavuje čerstvou analýzu..."):
+                        try:
+                            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                            now_str = datetime.now().strftime("%d.%m.%Y v %H:%M")
+                            
+                            prompt = (
+                                f"Dnešní datum a přesný čas je: {now_str}. Tvým úkolem je udělat aktuální a faktické shrnutí dění na akciových trzích. "
+                                "Uplatni tato ZÁVAZNÁ pravidla:\n"
+                                f"1. NA PRVNÍ ŘÁDEK napiš tučně: 'Analýza vygenerována dne: {now_str}' a uveď, k jakému dni/období data na trzích reálně patří.\n"
+                                "2. Buď konkrétní a věcný. Vyhni se vágním frázím o volatilitě a makrodatech. Pokud mluvíš o zprávách, uveď konkrétní událost, jméno firmy nebo report, který vyšel.\n"
+                                "3. Uveď reálná čísla nebo přibližný vývoj hlavních indexů (S&P 500, NASDAQ, DAX) za poslední uzavřenou obchodní seanci.\n"
+                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdem.\n"
+                                "Odpovídej kompletně v českém jazyce, přehledně, strukturovaně s využitím odrážek a profesionálním tónem."
+                            )
+                            
+                            model = genai.GenerativeModel('gemini-2.5-flash')
+                            response = model.generate_content(prompt)
+                                
+                            st.markdown(response.text)
+                        except Exception as ai_err:
+                            st.error(f"Při komunikaci s AI došlo k chybě: {ai_err}")
+            else:
+                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit (Secrets) nastavit klíč `GEMINI_API_KEY` podle návodu.")
+        
+        st.divider()
+        
+        # --- SEKCE B: KOMBINOVANÉ ZPRÁVY Z PORTFOLIA ŘAZENÉ PODLE ČASU ---
+        all_portfolio_news = []
+        for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
+            ticker_symbol = row_p["Ticker"]
+            company_name = row_p["Název"]
+            
+            try:
+                ticker_obj = yf.Ticker(ticker_symbol)
+                news_list = ticker_obj.news
+                if news_list:
+                    for item in news_list:
+                        title_news = item.get("title")
+                        link_news = item.get("link")
+                        if not title_news and "content" in item:
+                            title_news = item["content"].get("title")
+                            link_news = item["content"].get("clickThroughUrl", {}).get("url") or item["content"].get("pubUrl")
+                        
+                        if not title_news or not link_news: continue
+                        publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
+                        
+                        try:
+                            raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
+                            if "T" in str(raw_time):
+                                dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+                                timestamp = int(dt_obj.timestamp())
+                            else: timestamp = int(raw_time)
+                        except: timestamp = 0
+                            
+                        all_portfolio_news.append({
+                            "company": company_name, "ticker": ticker_symbol, "title": title_news,
+                            "link": link_news, "publisher": publisher, "timestamp": timestamp
+                        })
+            except: pass
+                
+        if all_portfolio_news:
+            all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
+            for news in all_portfolio_news[:100]:
+                try: pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
+                except: pub_time = "Aktuální"
+                    
+                st.markdown(f"📌 **{news['company']} ({news['ticker']})** | *{pub_time}* | *Zdroj: {news['publisher']}*")
+                st.markdown(f"[{news['title']}]({news['link']})")
+        else:
+            st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
+
+    elif page == "⚙️ Ostatní":
+        color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
+        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='CZK', color='Měna', color_discrete_map=color_map)
+        fig.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
+        fig.update_layout(height=700)
+        st.plotly_chart(fig, use_container_width=True)
+        
+except Exception as e: st.error(f"Kritická chyba: {e}")
