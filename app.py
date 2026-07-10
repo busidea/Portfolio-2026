@@ -146,6 +146,7 @@ try:
                 except: earn_dt_str = raw_val
         
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
+        obor_val = str(r['Obor']).strip() if 'Obor' in r and pd.notna(r['Obor']) else "Neurčeno"
 
         processed.append({
             "Ticker": t, "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
@@ -153,6 +154,7 @@ try:
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
             "Poznámka": poznamka_val,
+            "Obor": obor_val,
             "History": hist, "RefPrice": ref_price,
             "Měna": str(r["Měna"]).strip()
         })
@@ -194,10 +196,24 @@ try:
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
     elif page == "🖼️ Grafika":
-        fig = px.treemap(df_p, path=[px.Constant("Portfolio"), 'Název'], values='CZK')
-        fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%}")
-        fig.update_layout(height=800)
-        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("🖼️ Struktura portfolia")
+        
+        # Pojistka: Pro graf vyfiltrujeme pouze tituly, které mají reálnou hodnotu větší než 0
+        df_graf = df_p[df_p['CZK'] > 0].copy()
+        
+        if not df_graf.empty:
+            fig = px.treemap(
+                df_graf, 
+                path=['Název'], 
+                values='CZK',
+                color='Název',
+                color_discrete_sequence=px.colors.qualitative.Bold
+            )
+            fig.update_traces(texttemplate="<b>%{label}</b><br>%{value:,.0f} CZK<br>%{percentRoot:.1%} z celku")
+            fig.update_layout(height=850, margin=dict(t=30, l=10, r=10, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Žádná data s platnou cenou pro zobrazení grafu.")
 
     elif page == "📈 Výkonnost":
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
@@ -208,12 +224,20 @@ try:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
             port_h = pd.Series(0.0, index=idx_h.index)
-            for _, r in df_p.iterrows():
-                if not r["History"].empty:
-                    h = r["History"].reindex(idx_h.index, method='ffill')
-                    if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
-                        port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
-                        if r["Název"] in sel: fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
+            
+            # Pojistka: Počítáme do portfolia jen pokud je celková hodnota portfolia nad nulou
+            if total_val > 0:
+                for _, r in df_p.iterrows():
+                    # Pojistka: Kontrola, že historie není prázdná a první historická cena není 0
+                    if not r["History"].empty and len(r["History"]) > 0:
+                        first_price = r["History"].iloc[0]
+                        if pd.notna(first_price) and first_price > 0:
+                            h = r["History"].reindex(idx_h.index, method='ffill')
+                            if not h.empty and pd.notna(h.iloc[0]) and h.iloc[0] != 0:
+                                port_h += (h/h.iloc[0]-1)*100 * (r["CZK"]/total_val)
+                                if r["Název"] in sel: 
+                                    fig.add_trace(go.Scatter(x=h.index, y=(h/h.iloc[0]-1)*100, name=r["Název"]))
+            
             fig.add_trace(go.Scatter(x=port_h.index, y=port_h, name="MOJE PORTFOLIO", line=dict(width=4)))
             st.plotly_chart(fig, use_container_width=True)
         else: st.warning("Nepodařilo se načíst historii pro vybraný index.")
@@ -268,7 +292,6 @@ try:
         else: st.info("Nemáte žádné specifické poznámky u akcií v prvním listu.")
 
     elif page == "📰 Tržní zprávy":
-        # --- SEKCE A: DENNÍ SHRNOTÍ TRHU (Investiční web) ---
         svodky = get_investicni_web_svodka()
         for svodka in svodky:
             with st.container(border=True):
@@ -278,16 +301,12 @@ try:
         
         st.divider()
 
-        # --- SEKCE: SITUACE DLE AI (ROZBALOVACÍ PANEL) ---
         with st.expander("🤖 Situace na trzích dle AI"):
             if "GEMINI_API_KEY" in st.secrets:
                 if st.button("Spustit analýzu aktuálního dění"):
-                    with st.spinner("Gemini prohledává internet a sestavuje čerstvou analýzu..."):
+                    with st.spinner("Gemini prohledává internet..."):
                         try:
-                            # Inicializace API klíče
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                            
-                            # Zjistíme přesný dnešní čas aplikace, abychom ho předali AI jako pevnou kotvu
                             now_str = datetime.now().strftime("%d.%m.%Y v %H:%M")
                             
                             prompt = (
@@ -296,22 +315,20 @@ try:
                                 f"1. NA PRVNÍ ŘÁDEK napiš tučně: 'Analýza vygenerována dne: {now_str}' a uveď, k jakému dni/období data na trzích reálně patří.\n"
                                 "2. Buď konkrétní a věcný. Vyhni se vágním frázím o volatilitě a makrodatech. Pokud mluvíš o zprávách, uveď konkrétní událost, jméno firmy nebo report, který vyšel.\n"
                                 "3. Uveď reálná čísla nebo přibližný vývoj hlavních indexů (S&P 500, NASDAQ, DAX) za poslední uzavřenou obchodní seanci.\n"
-                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdnem.\n"
+                                "4. Pokud je víkend, výslovně to uveď a shrň uzavření trhů z pátku a klíčové zprávy, které hýbaly uplynulým týdem.\n"
                                 "Odpovídej kompletně v českém jazyce, přehledně, strukturovaně s využitím odrážek a profesionálním tónem."
                             )
                             
                             model = genai.GenerativeModel('gemini-2.5-flash')
                             response = model.generate_content(prompt)
-                                
                             st.markdown(response.text)
                         except Exception as ai_err:
                             st.error(f"Při komunikaci s AI došlo k chybě: {ai_err}")
             else:
-                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit (Secrets) nastavit klíč `GEMINI_API_KEY` podle návodu.")
+                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit nastavit klíč `GEMINI_API_KEY`.")
         
         st.divider()
         
-        # --- SEKCE B: KOMBINOVANÉ ZPRÁVY Z PORTFOLIA ŘAZENÉ PODLE ČASU ---
         all_portfolio_news = []
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
             ticker_symbol = row_p["Ticker"]
@@ -357,10 +374,15 @@ try:
             st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
-        color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
-        fig = px.sunburst(df_p, path=['Měna', 'Název'], values='CZK', color='Měna', color_discrete_map=color_map)
-        fig.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
-        fig.update_layout(height=700)
-        st.plotly_chart(fig, use_container_width=True)
+        # Pojistka i pro Sunburst graf měn
+        df_graf_mena = df_p[df_p['CZK'] > 0].copy()
+        if not df_graf_mena.empty:
+            color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
+            fig = px.sunburst(df_graf_mena, path=['Měna', 'Název'], values='CZK', color='Měna', color_discrete_map=color_map)
+            fig.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
+            fig.update_layout(height=700)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Žádná platná data pro zobrazení měnového grafu.")
         
 except Exception as e: st.error(f"Kritická chyba: {e}")
