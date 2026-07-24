@@ -4,9 +4,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import feedparser  # Knihovna pro čtení RSS kanálů
-import urllib.request # Pomocná knihovna pro simulaci prohlížeče
-import google.generativeai as genai  # Oficiální knihovna pro Google Gemini AI
+import feedparser
+import urllib.request
+import google.generativeai as genai
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
@@ -43,7 +43,6 @@ def load_market_data(_tickers):
         except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
     return data
 
-# Funkce pro stahování denního shrnutí trhu z Investičního webu
 @st.cache_data(ttl=3600)
 def get_investicni_web_svodka():
     try:
@@ -61,7 +60,6 @@ def get_investicni_web_svodka():
             title_lower = entry.title.lower()
             if "shrnutí obchodování v usa" in title_lower or "usa" in title_lower and "akcie" in title_lower:
                 summary_clean = entry.summary.split('<')[0] if '<' in entry.summary else entry.summary
-                
                 display_title = "Shrnutí obchodování v USA"
                 if " - " in entry.title:
                     display_title = f"Shrnutí obchodování v USA ({entry.title.split(' - ')[-1]})"
@@ -74,10 +72,8 @@ def get_investicni_web_svodka():
             if len(svodky) >= 3:
                 break
                 
-        if svodky:
-            return svodky
-    except:
-        pass
+        if svodky: return svodky
+    except: pass
     return [{
         "title": "Shrnutí obchodování v USA", 
         "summary": "Odkaz přímo na kompletní výpis denních shrnutí amerických trhů.", 
@@ -100,7 +96,15 @@ try:
     except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
 
     st.sidebar.title("💎 MENU")
-    page = st.sidebar.radio("NAVIGACE:", ["💰 Přehled", "🖼️ Grafika", "📈 Výkonnost", "📋 Úkoly a Poznámky", "📰 Tržní zprávy", "⚙️ Ostatní"])
+    page = st.sidebar.radio("NAVIGACE:", [
+        "💰 Přehled", 
+        "🔍 Analýza firem", 
+        "🖼️ Grafika", 
+        "📈 Výkonnost", 
+        "📋 Úkoly a Poznámky", 
+        "📰 Tržní zprávy", 
+        "⚙️ Ostatní"
+    ])
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
@@ -131,7 +135,6 @@ try:
             
         total_val += val_czk
         total_ref += (ks * ref_price * rate)
-        
         div_ks = info["div"]
         
         earn_dt_str = "-"
@@ -153,10 +156,8 @@ try:
             "Zisk %": ((curr_price - ref_price)/ref_price*100) if ref_price > 0 else 0,
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
-            "Poznámka": poznamka_val,
-            "Obor": obor_val,
-            "History": hist, "RefPrice": ref_price,
-            "Měna": str(r["Měna"]).strip()
+            "Poznámka": poznamka_val, "Obor": obor_val,
+            "History": hist, "RefPrice": ref_price, "Měna": str(r["Měna"]).strip()
         })
     df_p = pd.DataFrame(processed)
 
@@ -195,10 +196,72 @@ try:
             })
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height="content")
 
+    elif page == "🔍 Analýza firem":
+        st.title("🔍 Hloubková AI Analýza společnosti")
+        st.write("Vyberte společnost z vašeho portfolia a vygenerujte si kompletní investiční rozbor.")
+        
+        # Výběr společnosti
+        company_names = df_p["Název"].tolist()
+        selected_company = st.selectbox("Vyberte společnost k analýze:", company_names)
+        
+        selected_row = df_p[df_p["Název"] == selected_company].iloc[0]
+        ticker_code = selected_row["Ticker"]
+        
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Ticker", ticker_code)
+        col_b.metric("Aktuální cena", f"{format_cz(selected_row['Cena'])} {selected_row['Měna']}")
+        col_c.metric("Obor", selected_row["Obor"])
+        
+        st.divider()
+
+        if "GEMINI_API_KEY" in st.secrets:
+            if st.button(f"🚀 Vygenerovat/Aktualizovat analýzu pro {selected_company}"):
+                with st.spinner(f"Gemini AI zpracovává hloubkovou analýzu pro {selected_company} ({ticker_code})..."):
+                    try:
+                        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                        now_str = datetime.now().strftime("%d.%m.%Y")
+                        
+                        prompt = f"""
+                        Jsi špičkový akciový analytik a portfolio manažer.
+                        Udělej podrobnou, profesionální a aktuální investiční analýzu pro společnost: {selected_company} (Ticker: {ticker_code}).
+                        Dnešní datum je: {now_str}.
+
+                        Struktura analýzy Musí PŘESNĚ dodržet následujících 7 bodů:
+
+                        1. Základní profil a obchodní model
+                           - Čím se firma zabývá, jak generuje tržby, věcná a geografická struktura.
+
+                        2. Konkurenční prostředí a tržní pozice
+                           - Podíl na trhu, hlavní konkurenti, ekonomický příkop (MOAT) a jeho udržitelnost.
+
+                        3. Finanční profil a ocenění
+                           - Vývoj tržeb, marže, stav rozvahy/zadlužení, ziskové ukazatele a aktuální valuace (P/E, EV/EBITDA apod. ve srovnání s průměrem).
+
+                        4. Perspektiva oboru, pozice firmy a vnitřní procesy
+                           - Odvětvové trendy (např. AI, zelená tranzice, demografie), jak si v nich firma vede, jaké vnitřní transformace či investice realizuje.
+
+                        5. Aktuální problematika a klíčové katalyzátory (Stock Price Drivers)
+                           - Co aktuálně hýbe nebo může hýbat cenou akcie v nejbližších měsících (např. vyčlenění divizí, M&A, regulace, geografické problémy, dodavatelské řetězce).
+
+                        6. SWOT Analýza
+                           - Přehledná tabulka nebo odrážky: Silné stránky (Strengths), Slabé stránky (Weaknesses), Příležitosti (Opportunities), Hrozby (Threats).
+
+                        7. Investiční teze a závěrečný verdikt
+                           - Shrnutí pro dlouhodobého investora, hlavní rizika vs. potenciál výnosu a doporučení (např. Koupit / Držel / Sledovat).
+
+                        Odpovídej kompletně v českém jazyce, strukturovaně, s využitím nadpisů, tučného písma a odrážek. Buď věcný a uváděj konkrétní fakta.
+                        """
+                        
+                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        response = model.generate_content(prompt)
+                        st.markdown(response.text)
+                    except Exception as ai_err:
+                        st.error(f"Při generování analýzy došlo k chybě: {ai_err}")
+        else:
+            st.info("Pro generování analýzy firem je nutné v nastavení Streamlit nastavit klíč `GEMINI_API_KEY`.")
+
     elif page == "🖼️ Grafika":
         st.subheader("🖼️ Struktura portfolia")
-        
-        # Pojistka: Pro graf vyfiltrujeme pouze tituly, které mají reálnou hodnotu větší než 0
         df_graf = df_p[df_p['CZK'] > 0].copy()
         
         if not df_graf.empty:
@@ -225,10 +288,8 @@ try:
             fig.add_trace(go.Scatter(x=idx_h.index, y=(idx_h/idx_h.iloc[0]-1)*100, name="Index", line=dict(dash='dash')))
             port_h = pd.Series(0.0, index=idx_h.index)
             
-            # Pojistka: Počítáme do portfolia jen pokud je celková hodnota portfolia nad nulou
             if total_val > 0:
                 for _, r in df_p.iterrows():
-                    # Pojistka: Kontrola, že historie není prázdná a první historická cena není 0
                     if not r["History"].empty and len(r["History"]) > 0:
                         first_price = r["History"].iloc[0]
                         if pd.notna(first_price) and first_price > 0:
@@ -374,7 +435,6 @@ try:
             st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
-        # Pojistka i pro Sunburst graf měn
         df_graf_mena = df_p[df_p['CZK'] > 0].copy()
         if not df_graf_mena.empty:
             color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
