@@ -19,28 +19,59 @@ def format_cz(value, decimals=2):
 def get_fx_rates():
     return {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60)  # Zkráceno na 60s pro živější vnitrodenní aktualizaci
 def load_market_data(_tickers):
     data = {}
     all_symbols = [str(t).strip() for t in _tickers if str(t).strip()]
     all_symbols += ["^GSPC", "^GDAXI"]
-    try:
-        raw_hist = yf.download(all_symbols, period="2y", interval="1d", group_by='ticker', progress=False, actions=True)
-    except: raw_hist = pd.DataFrame()
+    
     for t in all_symbols:
         try:
-            cp, dv, hist = 0, 0, pd.Series()
-            if not raw_hist.empty:
-                t_df = raw_hist[t].dropna(subset=['Close']) if len(all_symbols) > 1 else raw_hist.dropna(subset=['Close'])
-                if not t_df.empty:
-                    cp = t_df['Close'].iloc[-1]
-                    hist = t_df['Close'].ffill()
-                    if hist.index.tz is not None:
-                        hist.index = hist.index.tz_localize(None)
-                    if 'Dividends' in t_df.columns:
-                        dv = t_df[t_df.index >= (datetime.now() - timedelta(days=365))]['Dividends'].sum()
-            data[t] = {"price": cp, "div": dv, "history": hist}
-        except: data[t] = {"price": 0, "div": 0, "history": pd.Series()}
+            t_obj = yf.Ticker(t)
+            # Načtení denní historie
+            hist_df = t_obj.history(period="2y", interval="1d")
+            
+            cp = 0
+            prev_close = 0
+            dv = 0
+            hist = pd.Series(dtype=float)
+            
+            if not hist_df.empty:
+                hist = hist_df['Close'].ffill()
+                if hist.index.tz is not None:
+                    hist.index = hist.index.tz_localize(None)
+                
+                # Získání živé ceny
+                try:
+                    cp = t_obj.fast_info.last_price
+                except:
+                    cp = hist.iloc[-1]
+                
+                if pd.isna(cp) or cp is None or cp == 0:
+                    cp = hist.iloc[-1]
+
+                # Výpočet předchozí zavírací ceny pro správnou denní změnu
+                try:
+                    prev_close = t_obj.fast_info.previous_close
+                except:
+                    prev_close = hist.iloc[-2] if len(hist) > 1 else hist.iloc[-1]
+                
+                if pd.isna(prev_close) or prev_close is None:
+                    prev_close = hist.iloc[-2] if len(hist) > 1 else hist.iloc[-1]
+
+                # Dividendy za poslední rok
+                if 'Dividends' in hist_df.columns:
+                    cutoff_date = datetime.now() - timedelta(days=365)
+                    # Ošetření časových pásem pro filtrování dividend
+                    hist_df_no_tz = hist_df.copy()
+                    if hist_df_no_tz.index.tz is not None:
+                        hist_df_no_tz.index = hist_df_no_tz.index.tz_localize(None)
+                    dv = hist_df_no_tz[hist_df_no_tz.index >= cutoff_date]['Dividends'].sum()
+
+            data[t] = {"price": cp, "prev_close": prev_close, "div": dv, "history": hist}
+        except:
+            data[t] = {"price": 0, "prev_close": 0, "div": 0, "history": pd.Series(dtype=float)}
+            
     return data
 
 @st.cache_data(ttl=3600)
@@ -58,7 +89,7 @@ def get_investicni_web_svodka():
         
         for entry in feed.entries:
             title_lower = entry.title.lower()
-            if "shrnutí obchodování v usa" in title_lower or "usa" in title_lower and "akcie" in title_lower:
+            if "shrnutí obchodování v usa" in title_lower or ("usa" in title_lower and "akcie" in title_lower):
                 summary_clean = entry.summary.split('<')[0] if '<' in entry.summary else entry.summary
                 display_title = "Shrnutí obchodování v USA"
                 if " - " in entry.title:
@@ -108,7 +139,6 @@ try:
     view_mode = st.sidebar.radio("Cena:", ["Standard", "Opce"])
     
     time_frame = st.sidebar.selectbox("Období:", ["1 den", "1 týden", "1 měsíc", "1 rok", "Od nákupu"], index=0)
-    graph_days = 252 if time_frame == "Od nákupu" else {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
 
     processed = []
     total_val, total_ref = 0, 0
@@ -116,7 +146,7 @@ try:
 
     for _, r in df_raw.iterrows():
         t = str(r["Ticker"]).strip()
-        info = m_data.get(t, {"price": 0, "div": 0, "history": pd.Series()})
+        info = m_data.get(t, {"price": 0, "prev_close": 0, "div": 0, "history": pd.Series(dtype=float)})
         rate = fx.get(str(r["Měna"]).strip(), 1.0)
         ks = pd.to_numeric(str(r['Ks']).replace(',','.'), errors='coerce') or 0
         p_std = pd.to_numeric(str(r['Průměrná nákupní cena']).replace(',','.'), errors='coerce') or 0
@@ -124,13 +154,17 @@ try:
         
         ref_buy = p_std if view_mode == "Standard" else p_opt
         curr_price = info["price"] if pd.notna(info["price"]) else 0
+        prev_close = info["prev_close"] if pd.notna(info["prev_close"]) else 0
         val_czk = ks * curr_price * rate
         hist = info["history"]
         
+        # Určení srovnávací ceny podle vybraného období
         if time_frame == "Od nákupu":
             ref_price = ref_buy
+        elif time_frame == "1 den":
+            ref_price = prev_close if prev_close > 0 else curr_price
         else:
-            target_days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
+            target_days = {"1 rok": 252, "1 měsíc": 21, "1 týden": 5}[time_frame]
             ref_price = hist.iloc[-(target_days + 1)] if (not hist.empty and len(hist) > target_days) else ref_buy
             
         total_val += val_czk
@@ -200,7 +234,6 @@ try:
         st.title("🔍 Hloubková AI Analýza společnosti")
         st.write("Vyberte společnost z vašeho portfolia a vygenerujte si kompletní investiční rozbor.")
         
-        # Výběr společnosti
         company_names = df_p["Název"].tolist()
         selected_company = st.selectbox("Vyberte společnost k analýze:", company_names)
         
@@ -281,7 +314,9 @@ try:
     elif page == "📈 Výkonnost":
         idx_t = "^GSPC" if st.radio("Index:", ["S&P 500", "DAX 40"], horizontal=True) == "S&P 500" else "^GDAXI"
         sel = st.multiselect("Srovnání:", df_p["Název"].tolist())
-        idx_h = m_data[idx_t]["history"].tail(graph_days + 1)
+        
+        target_days = 252 if time_frame == "Od nákupu" else {"1 rok": 252, "1 měsíc": 21, "1 týden": 5, "1 den": 1}[time_frame]
+        idx_h = m_data[idx_t]["history"].tail(target_days + 1)
         
         if not idx_h.empty:
             fig = go.Figure()
