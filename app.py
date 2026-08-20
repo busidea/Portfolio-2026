@@ -184,6 +184,8 @@ try:
         
         poznamka_val = str(r['Poznámka']).strip() if 'Poznámka' in r and pd.notna(r['Poznámka']) else "-"
         obor_val = str(r['Obor']).strip() if 'Obor' in r and pd.notna(r['Obor']) else "Neurčeno"
+        sentiment_val = str(r['Sentiment']).strip() if 'Sentiment' in r and pd.notna(r['Sentiment']) else "Neuvedeno"
+        charakter_val = str(r['Charakter']).strip() if 'Charakter' in r and pd.notna(r['Charakter']) else "Neuvedeno"
 
         processed.append({
             "Ticker": t, "Název": r['Název'], "KS": ks, "Cena": curr_price, "CZK": val_czk, 
@@ -191,6 +193,7 @@ try:
             "Div/ks": div_ks, "Div celkem": ks * div_ks * rate, 
             "Earnings": earn_dt_str, "Dní": days_to, 
             "Poznámka": poznamka_val, "Obor": obor_val,
+            "Sentiment": sentiment_val, "Charakter": charakter_val,
             "History": hist, "RefPrice": ref_price, "Měna": str(r["Měna"]).strip()
         })
     df_p = pd.DataFrame(processed)
@@ -470,14 +473,56 @@ try:
             st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
-        df_graf_mena = df_p[df_p['CZK'] > 0].copy()
-        if not df_graf_mena.empty:
-            color_map = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f'}
-            fig = px.sunburst(df_graf_mena, path=['Měna', 'Název'], values='CZK', color='Měna', color_discrete_map=color_map)
-            fig.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
-            fig.update_layout(height=700)
-            st.plotly_chart(fig, use_container_width=True)
+        st.title("⚙️ Analýza rozložení portfolia")
+        df_graf_all = df_p[df_p['CZK'] > 0].copy()
+        
+        if not df_graf_all.empty:
+            col1, col2, col3 = st.columns(3)
+            
+            # 1. Graf podle Měny
+            with col1:
+                st.subheader("💱 Rozdělení dle Měny")
+                color_map_mena = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f', 'GBP': '#7b1fa2', 'DKK': '#e65100'}
+                fig_mena = px.sunburst(
+                    df_graf_all, 
+                    path=['Měna', 'Název'], 
+                    values='CZK', 
+                    color='Měna', 
+                    color_discrete_map=color_map_mena
+                )
+                fig_mena.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
+                fig_mena.update_layout(height=550, margin=dict(t=20, l=10, r=10, b=10))
+                st.plotly_chart(fig_mena, use_container_width=True)
+
+            # 2. Graf podle Sentimentu
+            with col2:
+                st.subheader("🧠 Rozdělení dle Sentimentu")
+                fig_sent = px.sunburst(
+                    df_graf_all, 
+                    path=['Sentiment', 'Název'], 
+                    values='CZK',
+                    color='Sentiment',
+                    color_discrete_sequence=px.colors.qualitative.Set2
+                )
+                fig_sent.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
+                fig_sent.update_layout(height=550, margin=dict(t=20, l=10, r=10, b=10))
+                st.plotly_chart(fig_sent, use_container_width=True)
+
+            # 3. Graf podle Charakteru
+            with col3:
+                st.subheader("🏷️ Rozdělení dle Charakteru")
+                fig_char = px.sunburst(
+                    df_graf_all, 
+                    path=['Charakter', 'Název'], 
+                    values='CZK',
+                    color='Charakter',
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
+                fig_char.update_traces(texttemplate="<b>%{label}</b><br>%{percentParent:.1%}", insidetextorientation='radial')
+                fig_char.update_layout(height=550, margin=dict(t=20, l=10, r=10, b=10))
+                st.plotly_chart(fig_char, use_container_width=True)
+
         else:
-            st.info("Žádná platná data pro zobrazení měnového grafu.")
+            st.info("Žádná platná data pro zobrazení grafů rozložení.")
         
 except Exception as e: st.error(f"Kritická chyba: {e}")
