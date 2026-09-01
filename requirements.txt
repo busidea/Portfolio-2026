@@ -4,3 +4,4 @@ pandas
 plotly
 feedparser
 google-generativeai
+openai
