@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import feedparser
 import urllib.request
-from openai import OpenAI
+from google import genai
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
 
@@ -235,7 +235,7 @@ try:
 
     elif page == "🔍 Analýza firem":
         st.title("🔍 Hloubková AI Analýza společnosti")
-        st.write("Vyberte společnost z vašeho portfolia a vygenerujte si kompletní investiční rozbor za použití ChatGPT (OpenAI).")
+        st.write("Vyberte společnost z vašeho portfolia a vygenerujte si kompletní investiční rozbor za použití Google Gemini.")
         
         company_names = df_p["Název"].tolist()
         selected_company = st.selectbox("Vyberte společnost k analýze:", company_names)
@@ -250,11 +250,11 @@ try:
         
         st.divider()
 
-        if "OPENAI_API_KEY" in st.secrets:
+        if "GEMINI_API_KEY" in st.secrets:
             if st.button(f"🚀 Vygenerovat/Aktualizovat analýzu pro {selected_company}"):
-                with st.spinner(f"ChatGPT zpracovává hloubkovou analýzu pro {selected_company} ({ticker_code})..."):
+                with st.spinner(f"Gemini zpracovává hloubkovou analýzu pro {selected_company} ({ticker_code})..."):
                     try:
-                        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
                         now_str = datetime.now().strftime("%d.%m.%Y")
                         
                         prompt = f"""
@@ -288,19 +288,15 @@ try:
                         Odpovídej kompletně v českém jazyce, strukturovaně, s využitím nadpisů, tučného písma a odrážek. Buď věcný a uváděj konkrétní fakta.
                         """
                         
-                        response = client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[
-                                {"role": "system", "content": "Jsi zkušený akciový analytik a poradce."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.3
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt
                         )
-                        st.markdown(response.choices[0].message.content)
+                        st.markdown(response.text)
                     except Exception as ai_err:
                         st.error(f"Při generování analýzy došlo k chybě: {ai_err}")
         else:
-            st.info("Pro generování analýzy firem je nutné v nastavení Streamlit (`.streamlit/secrets.toml`) nastavit klíč `OPENAI_API_KEY`.")
+            st.info("Pro generování analýzy firem je nutné v nastavení Streamlit (`.streamlit/secrets.toml`) nastavit klíč `GEMINI_API_KEY`.")
 
     elif page == "🖼️ Grafika":
         st.subheader("🖼️ Struktura portfolia")
@@ -406,12 +402,12 @@ try:
         
         st.divider()
 
-        with st.expander("🤖 Situace na trzích dle AI (ChatGPT)"):
-            if "OPENAI_API_KEY" in st.secrets:
+        with st.expander("🤖 Situace na trzích dle AI (Gemini)"):
+            if "GEMINI_API_KEY" in st.secrets:
                 if st.button("Spustit analýzu aktuálního dění"):
-                    with st.spinner("ChatGPT zpracovává tržní přehled..."):
+                    with st.spinner("Gemini zpracovává tržní přehled..."):
                         try:
-                            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
                             now_str = datetime.now().strftime("%d.%m.%Y v %H:%M")
                             
                             prompt = (
@@ -424,19 +420,15 @@ try:
                                 "Odpovídej kompletně v českém jazyce, přehledně, strukturovaně s využitím odrážek a profesionálním tónem."
                             )
                             
-                            response = client.chat.completions.create(
-                                model="gpt-4o",
-                                messages=[
-                                    {"role": "system", "content": "Jsi akciový analytik zaměřující se na denní tržní přehledy."},
-                                    {"role": "user", "content": prompt}
-                                ],
-                                temperature=0.3
+                            response = client.models.generate_content(
+                                model="gemini-2.5-flash",
+                                contents=prompt
                             )
-                            st.markdown(response.choices[0].message.content)
+                            st.markdown(response.text)
                         except Exception as ai_err:
                             st.error(f"Při komunikaci s AI došlo k chybě: {ai_err}")
             else:
-                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit nastavit klíč `OPENAI_API_KEY`.")
+                st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit nastavit klíč `GEMINI_API_KEY`.")
         
         st.divider()
         
