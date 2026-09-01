@@ -1,7 +1,6 @@
+google-genai
 streamlit
 yfinance
 pandas
 plotly
 feedparser
-google-generativeai
-openai
