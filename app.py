@@ -12,8 +12,10 @@ st.set_page_config(page_title="Investiční Portál", layout="wide")
 
 # --- 1. FUNKCE ---
 def format_cz(value, decimals=2):
-    try: return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" ", " ")
-    except: return "0"
+    try:
+        return f"{float(value):,.{decimals}f}".replace(",", " ").replace(".", ",").replace(" ", " ")
+    except:
+        return "0"
 
 @st.cache_data(ttl=3600)
 def get_fx_rates():
@@ -123,8 +125,10 @@ try:
     m_data = load_market_data(tickers_list)
     fx = get_fx_rates()
 
-    try: df_ukoly_raw = pd.read_csv(URL_UKOLY)
-    except: df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
+    try: 
+        df_ukoly_raw = pd.read_csv(URL_UKOLY)
+    except: 
+        df_ukoly_raw = pd.DataFrame(columns=["Úkol", "Termín"])
 
     st.sidebar.title("💎 MENU")
     page = st.sidebar.radio("NAVIGACE:", [
@@ -283,7 +287,7 @@ try:
                            - Přehledná tabulka nebo odrážky: Silné stránky (Strengths), Slabé stránky (Weaknesses), Příležitosti (Opportunities), Hrozby (Threats).
 
                         7. Investiční teze a závěrečný verdikt
-                           - Shrnutí pro dlouhodobého investora, hlavní rizika vs. potenciál výnosu a doporučení (např. Koupit / Držel / Sledovat).
+                           - Shrnutí pro dlouhodobého investora, hlavní rizika vs. potenciál výnosu a doporučení (např. Koupit / Držet / Sledovat).
 
                         Odpovídej kompletně v českém jazyce, strukturovaně, s využitím nadpisů, tučného písma a odrážek. Buď věcný a uváděj konkrétní fakta.
                         """
@@ -398,7 +402,7 @@ try:
             with st.container(border=True):
                 st.markdown(f"#### 🌐 {svodka['title']}")
                 st.write(svodka['summary'])
-                st.markdown(f"[Přečíst celý článek na Investičním webu]({svodka['link']})")
+                st.markdown(f"[{svodka['title']}]({svodka['link']})")
         
         st.divider()
 
@@ -431,48 +435,76 @@ try:
                 st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit nastavit klíč `GEMINI_API_KEY`.")
         
         st.divider()
+        st.subheader("📌 Zprávy k vašim titulům z portfolia")
         
         all_portfolio_news = []
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
-            ticker_symbol = row_p["Ticker"]
-            company_name = row_p["Název"]
+            ticker_symbol = str(row_p["Ticker"]).strip()
+            company_name = str(row_p["Název"]).strip()
             
             try:
                 ticker_obj = yf.Ticker(ticker_symbol)
                 news_list = ticker_obj.news
                 if news_list:
                     for item in news_list:
-                        title_news = item.get("title")
-                        link_news = item.get("link")
-                        if not title_news and "content" in item:
-                            title_news = item["content"].get("title")
-                            link_news = item["content"].get("clickThroughUrl", {}).get("url") or item["content"].get("pubUrl")
+                        title_news = None
+                        link_news = None
+                        publisher = "Yahoo Finance"
+                        timestamp = 0
+
+                        # Extrakce zprávy v závislosti na formátu Yahoo API
+                        if isinstance(item, dict):
+                            if "title" in item and item["title"]:
+                                title_news = item.get("title")
+                                link_news = item.get("link")
+                                publisher = item.get("publisher", "Yahoo Finance")
+                                raw_time = item.get("providerPublishTime", 0)
+                                try: timestamp = int(raw_time)
+                                except: timestamp = 0
+                            elif "content" in item and isinstance(item["content"], dict):
+                                content = item["content"]
+                                title_news = content.get("title")
+                                link_news = content.get("clickThroughUrl", {}).get("url") or content.get("pubUrl")
+                                publisher = content.get("provider", {}).get("displayName", "Yahoo Finance")
+                                raw_time = content.get("pubDate")
+                                try:
+                                    if raw_time and "T" in str(raw_time):
+                                        dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+                                        timestamp = int(dt_obj.timestamp())
+                                    else: timestamp = int(raw_time)
+                                except: timestamp = 0
                         
-                        if not title_news or not link_news: continue
-                        publisher = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName") or "Yahoo Finance"
-                        
-                        try:
-                            raw_time = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
-                            if "T" in str(raw_time):
-                                dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
-                                timestamp = int(dt_obj.timestamp())
-                            else: timestamp = int(raw_time)
-                        except: timestamp = 0
-                            
-                        all_portfolio_news.append({
-                            "company": company_name, "ticker": ticker_symbol, "title": title_news,
-                            "link": link_news, "publisher": publisher, "timestamp": timestamp
-                        })
-            except: pass
+                        if title_news and link_news:
+                            all_portfolio_news.append({
+                                "company": company_name, 
+                                "ticker": ticker_symbol, 
+                                "title": title_news,
+                                "link": link_news, 
+                                "publisher": publisher, 
+                                "timestamp": timestamp
+                            })
+            except Exception:
+                pass
                 
         if all_portfolio_news:
             all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
-            for news in all_portfolio_news[:100]:
-                try: pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M')
-                except: pub_time = "Aktuální"
+            # Odstranění duplicit na základě názvu zprávy
+            seen_titles = set()
+            unique_news = []
+            for n in all_portfolio_news:
+                if n["title"] not in seen_titles:
+                    seen_titles.add(n["title"])
+                    unique_news.append(n)
+
+            for news in unique_news[:100]:
+                try: 
+                    pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M') if news["timestamp"] > 0 else "Nedávno"
+                except: 
+                    pub_time = "Nedávno"
                     
                 st.markdown(f"📌 **{news['company']} ({news['ticker']})** | *{pub_time}* | *Zdroj: {news['publisher']}*")
                 st.markdown(f"[{news['title']}]({news['link']})")
+                st.write("")
         else:
             st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
 
@@ -527,6 +559,7 @@ try:
                 st.plotly_chart(fig_char, use_container_width=True)
 
         else:
-            st.info("Žádná platná data pro zobrazení grafů rozložení.")
-        
-except Exception as e: st.error(f"Kritická chyba: {e}")
+            st.info("Žádná data s platnou hodnotou pro zobrazení grafů.")
+
+except Exception as e:
+    st.error(f"Došlo k chybě při načítání dat nebo zpracování aplikace: {e}")
