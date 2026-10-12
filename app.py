@@ -64,7 +64,6 @@ def load_market_data(_tickers):
                 # Dividendy za poslední rok
                 if 'Dividends' in hist_df.columns:
                     cutoff_date = datetime.now() - timedelta(days=365)
-                    # Ošetření časových pásem pro filtrování dividend
                     hist_df_no_tz = hist_df.copy()
                     if hist_df_no_tz.index.tz is not None:
                         hist_df_no_tz.index = hist_df_no_tz.index.tz_localize(None)
@@ -162,7 +161,6 @@ try:
         val_czk = ks * curr_price * rate
         hist = info["history"]
         
-        # Určení srovnávací ceny podle vybraného období
         if time_frame == "Od nákupu":
             ref_price = ref_buy
         elif time_frame == "1 den":
@@ -435,68 +433,54 @@ try:
                 st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit nastavit klíč `GEMINI_API_KEY`.")
         
         st.divider()
-        st.subheader("📌 Zprávy k vašim titulům z portfolia")
+        st.subheader("📌 Zprávy k vašim titulům z portfolia (Google News RSS)")
         
         all_portfolio_news = []
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
             ticker_symbol = str(row_p["Ticker"]).strip()
             company_name = str(row_p["Název"]).strip()
             
+            # Robustní vyhledávání skrze Google News RSS pro spolehlivou náhradu nefunkčního Yahoo .news
             try:
-                ticker_obj = yf.Ticker(ticker_symbol)
-                news_list = ticker_obj.news
-                if news_list:
-                    for item in news_list:
-                        title_news = None
-                        link_news = None
-                        publisher = "Yahoo Finance"
-                        timestamp = 0
+                clean_ticker = ticker_symbol.split('.')[0]
+                rss_url = f"https://news.google.com/rss/search?q={clean_ticker}+{company_name}&hl=en-US&gl=US&ceid=US:en"
+                feed = feedparser.parse(rss_url)
+                
+                for entry in feed.entries[:3]:
+                    pub_ts = 0
+                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                        try:
+                            pub_ts = int(datetime(*entry.published_parsed[:6]).timestamp())
+                        except:
+                            pass
+                    
+                    publisher_name = "Google News"
+                    if hasattr(entry, 'source') and 'title' in entry.source:
+                        publisher_name = entry.source['title']
 
-                        # Extrakce zprávy v závislosti na formátu Yahoo API
-                        if isinstance(item, dict):
-                            if "title" in item and item["title"]:
-                                title_news = item.get("title")
-                                link_news = item.get("link")
-                                publisher = item.get("publisher", "Yahoo Finance")
-                                raw_time = item.get("providerPublishTime", 0)
-                                try: timestamp = int(raw_time)
-                                except: timestamp = 0
-                            elif "content" in item and isinstance(item["content"], dict):
-                                content = item["content"]
-                                title_news = content.get("title")
-                                link_news = content.get("clickThroughUrl", {}).get("url") or content.get("pubUrl")
-                                publisher = content.get("provider", {}).get("displayName", "Yahoo Finance")
-                                raw_time = content.get("pubDate")
-                                try:
-                                    if raw_time and "T" in str(raw_time):
-                                        dt_obj = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
-                                        timestamp = int(dt_obj.timestamp())
-                                    else: timestamp = int(raw_time)
-                                except: timestamp = 0
-                        
-                        if title_news and link_news:
-                            all_portfolio_news.append({
-                                "company": company_name, 
-                                "ticker": ticker_symbol, 
-                                "title": title_news,
-                                "link": link_news, 
-                                "publisher": publisher, 
-                                "timestamp": timestamp
-                            })
+                    all_portfolio_news.append({
+                        "company": company_name, 
+                        "ticker": ticker_symbol, 
+                        "title": entry.title,
+                        "link": entry.link, 
+                        "publisher": publisher_name, 
+                        "timestamp": pub_ts
+                    })
             except Exception:
                 pass
                 
         if all_portfolio_news:
-            all_portfolio_news.sort(key=lambda x: x["timestamp"], reverse=True)
-            # Odstranění duplicit na základě názvu zprávy
-            seen_titles = set()
+            # Odstranění duplicit podle odkazu
+            seen_links = set()
             unique_news = []
             for n in all_portfolio_news:
-                if n["title"] not in seen_titles:
-                    seen_titles.add(n["title"])
+                if n["link"] not in seen_links:
+                    seen_links.add(n["link"])
                     unique_news.append(n)
 
-            for news in unique_news[:100]:
+            unique_news.sort(key=lambda x: x["timestamp"], reverse=True)
+
+            for news in unique_news[:50]:
                 try: 
                     pub_time = datetime.fromtimestamp(news["timestamp"]).strftime('%d.%m.%Y %H:%M') if news["timestamp"] > 0 else "Nedávno"
                 except: 
