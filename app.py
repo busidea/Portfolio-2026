@@ -30,7 +30,6 @@ def load_market_data(_tickers):
     for t in all_symbols:
         try:
             t_obj = yf.Ticker(t)
-            # Načtení denní historie
             hist_df = t_obj.history(period="2y", interval="1d")
             
             cp = 0
@@ -43,7 +42,6 @@ def load_market_data(_tickers):
                 if hist.index.tz is not None:
                     hist.index = hist.index.tz_localize(None)
                 
-                # Získání živé ceny
                 try:
                     cp = t_obj.fast_info.last_price
                 except:
@@ -52,7 +50,6 @@ def load_market_data(_tickers):
                 if pd.isna(cp) or cp is None or cp == 0:
                     cp = hist.iloc[-1]
 
-                # Výpočet předchozí zavírací ceny pro správnou denní změnu
                 try:
                     prev_close = t_obj.fast_info.previous_close
                 except:
@@ -61,7 +58,6 @@ def load_market_data(_tickers):
                 if pd.isna(prev_close) or prev_close is None:
                     prev_close = hist.iloc[-2] if len(hist) > 1 else hist.iloc[-1]
 
-                # Dividendy za poslední rok
                 if 'Dividends' in hist_df.columns:
                     cutoff_date = datetime.now() - timedelta(days=365)
                     hist_df_no_tz = hist_df.copy()
@@ -433,18 +429,32 @@ try:
                 st.info("Pro spuštění AI analýzy je nutné v nastavení Streamlit nastavit klíč `GEMINI_API_KEY`.")
         
         st.divider()
-        st.subheader("📌 Zprávy k vašim titulům z portfolia (Google News RSS)")
+        st.subheader("📌 Čerstvé zprávy k vašim titulům z portfolia (posledních 14 dnů)")
         
         all_portfolio_news = []
+        cutoff_date_ts = int((datetime.now() - timedelta(days=14)).timestamp())
+
         for _, row_p in df_p.dropna(subset=["Ticker"]).iterrows():
             ticker_symbol = str(row_p["Ticker"]).strip()
             company_name = str(row_p["Název"]).strip()
+            clean_ticker = ticker_symbol.split('.')[0]
             
-            # Robustní vyhledávání skrze Google News RSS pro spolehlivou náhradu nefunkčního Yahoo .news
+            # Cílené vyhledávání v Google News RSS s filtrem stáří `when:14d`
             try:
-                clean_ticker = ticker_symbol.split('.')[0]
-                rss_url = f"https://news.google.com/rss/search?q={clean_ticker}+{company_name}&hl=en-US&gl=US&ceid=US:en"
-                feed = feedparser.parse(rss_url)
+                # Rozlišení českých a zahraničních titulů
+                if ".PR" in ticker_symbol or "CZK" in str(row_p.get("Měna", "")):
+                    rss_url = f"https://news.google.com/rss/search?q={clean_ticker}+{company_name}+when:14d&hl=cs&gl=CZ&ceid=CZ:cs"
+                else:
+                    rss_url = f"https://news.google.com/rss/search?q={clean_ticker}+{company_name}+when:14d&hl=en-US&gl=US&ceid=US:en"
+
+                req = urllib.request.Request(
+                    rss_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                )
+                with urllib.request.urlopen(req) as response:
+                    xml_data = response.read()
+                
+                feed = feedparser.parse(xml_data)
                 
                 for entry in feed.entries[:3]:
                     pub_ts = 0
@@ -454,18 +464,20 @@ try:
                         except:
                             pass
                     
-                    publisher_name = "Google News"
-                    if hasattr(entry, 'source') and 'title' in entry.source:
-                        publisher_name = entry.source['title']
+                    # Filtrujeme pouze zprávy, které jsou reálně novější než 14 dnů
+                    if pub_ts >= cutoff_date_ts or pub_ts == 0:
+                        publisher_name = "Google News"
+                        if hasattr(entry, 'source') and 'title' in entry.source:
+                            publisher_name = entry.source['title']
 
-                    all_portfolio_news.append({
-                        "company": company_name, 
-                        "ticker": ticker_symbol, 
-                        "title": entry.title,
-                        "link": entry.link, 
-                        "publisher": publisher_name, 
-                        "timestamp": pub_ts
-                    })
+                        all_portfolio_news.append({
+                            "company": company_name, 
+                            "ticker": ticker_symbol, 
+                            "title": entry.title,
+                            "link": entry.link, 
+                            "publisher": publisher_name, 
+                            "timestamp": pub_ts
+                        })
             except Exception:
                 pass
                 
@@ -478,6 +490,7 @@ try:
                     seen_links.add(n["link"])
                     unique_news.append(n)
 
+            # Seřazení výhradně od nejnovějších zpráv
             unique_news.sort(key=lambda x: x["timestamp"], reverse=True)
 
             for news in unique_news[:50]:
@@ -490,7 +503,7 @@ try:
                 st.markdown(f"[{news['title']}]({news['link']})")
                 st.write("")
         else:
-            st.info("Momentálně nebyly nalezeny žádné zprávy pro vaše tituly.")
+            st.info("V posledních 14 dnech nebyly nalezeny žádné nové zprávy pro vaše tituly.")
 
     elif page == "⚙️ Ostatní":
         st.title("⚙️ Analýza rozložení portfolia")
