@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import feedparser
 import urllib.request
+import urllib.parse
 from google import genai
 
 st.set_page_config(page_title="Investiční Portál", layout="wide")
@@ -21,7 +22,7 @@ def format_cz(value, decimals=2):
 def get_fx_rates():
     return {"CZK": 1.0, "EUR": 25.1, "USD": 23.4, "GBP": 29.8, "DKK": 3.36}
 
-@st.cache_data(ttl=60)  # Zkráceno na 60s pro živější vnitrodenní aktualizaci
+@st.cache_data(ttl=60)
 def load_market_data(_tickers):
     data = {}
     all_symbols = [str(t).strip() for t in _tickers if str(t).strip()]
@@ -438,25 +439,32 @@ try:
             ticker_symbol = str(row_p["Ticker"]).strip()
             company_name = str(row_p["Název"]).strip()
             clean_ticker = ticker_symbol.split('.')[0]
-            
-            # Cílené vyhledávání v Google News RSS s filtrem stáří `when:14d`
+            # Zjednodušení názvu firmy pro lepší shodu ve vyhledávání (např. odstranění přípon)
+            short_name = company_name
+            for suffix in [" Inc.", " Corp.", " Ltd.", " N.V.", " S.A.", " SE", " a.s.", " plc"]:
+                if short_name.endswith(suffix):
+                    short_name = short_name[:-len(suffix)].strip()
+
+            query_str = f"{clean_ticker} {short_name} when:14d"
+            encoded_query = urllib.parse.quote_plus(query_str)
+
             try:
-                # Rozlišení českých a zahraničních titulů
                 if ".PR" in ticker_symbol or "CZK" in str(row_p.get("Měna", "")):
-                    rss_url = f"https://news.google.com/rss/search?q={clean_ticker}+{company_name}+when:14d&hl=cs&gl=CZ&ceid=CZ:cs"
+                    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=cs&gl=CZ&ceid=CZ:cs"
                 else:
-                    rss_url = f"https://news.google.com/rss/search?q={clean_ticker}+{company_name}+when:14d&hl=en-US&gl=US&ceid=US:en"
+                    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
 
                 req = urllib.request.Request(
                     rss_url,
                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 )
-                with urllib.request.urlopen(req) as response:
+                with urllib.request.urlopen(req, timeout=8) as response:
                     xml_data = response.read()
                 
                 feed = feedparser.parse(xml_data)
                 
-                for entry in feed.entries[:3]:
+                # Max. 2 zprávy na titul, aby velké firmy nepohltily celý přehled
+                for entry in feed.entries[:2]:
                     pub_ts = 0
                     if hasattr(entry, 'published_parsed') and entry.published_parsed:
                         try:
@@ -464,7 +472,6 @@ try:
                         except:
                             pass
                     
-                    # Filtrujeme pouze zprávy, které jsou reálně novější než 14 dnů
                     if pub_ts >= cutoff_date_ts or pub_ts == 0:
                         publisher_name = "Google News"
                         if hasattr(entry, 'source') and 'title' in entry.source:
@@ -482,7 +489,6 @@ try:
                 pass
                 
         if all_portfolio_news:
-            # Odstranění duplicit podle odkazu
             seen_links = set()
             unique_news = []
             for n in all_portfolio_news:
@@ -490,7 +496,6 @@ try:
                     seen_links.add(n["link"])
                     unique_news.append(n)
 
-            # Seřazení výhradně od nejnovějších zpráv
             unique_news.sort(key=lambda x: x["timestamp"], reverse=True)
 
             for news in unique_news[:50]:
@@ -512,7 +517,6 @@ try:
         if not df_graf_all.empty:
             col1, col2, col3 = st.columns(3)
             
-            # 1. Graf podle Měny
             with col1:
                 st.subheader("💱 Rozdělení dle Měny")
                 color_map_mena = {'CZK': '#29b6f6', 'EUR': '#0d47a1', 'USD': '#d32f2f', 'GBP': '#7b1fa2', 'DKK': '#e65100'}
@@ -527,7 +531,6 @@ try:
                 fig_mena.update_layout(height=550, margin=dict(t=20, l=10, r=10, b=10))
                 st.plotly_chart(fig_mena, use_container_width=True)
 
-            # 2. Graf podle Sentimentu
             with col2:
                 st.subheader("🧠 Rozdělení dle Sentimentu")
                 fig_sent = px.sunburst(
@@ -541,7 +544,6 @@ try:
                 fig_sent.update_layout(height=550, margin=dict(t=20, l=10, r=10, b=10))
                 st.plotly_chart(fig_sent, use_container_width=True)
 
-            # 3. Graf podle Charakteru
             with col3:
                 st.subheader("🏷️ Rozdělení dle Charakteru")
                 fig_char = px.sunburst(
